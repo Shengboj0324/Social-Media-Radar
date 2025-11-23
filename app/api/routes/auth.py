@@ -1,9 +1,18 @@
 """Authentication routes."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Optional
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, EmailStr
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.db import get_db
+from app.core.models import UserProfile
 
 router = APIRouter()
+security = HTTPBearer()
 
 
 class UserCreate(BaseModel):
@@ -75,4 +84,40 @@ async def logout():
     """
     # TODO: Implement token invalidation
     return {"message": "Logged out successfully"}
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_db)
+) -> UserProfile:
+    """Get current authenticated user from JWT token.
+
+    This is a dependency function used in protected routes.
+
+    Args:
+        credentials: HTTP Bearer token
+        db: Database session
+
+    Returns:
+        Current user profile
+
+    Raises:
+        HTTPException: If token is invalid or user not found
+    """
+    # TODO: Implement JWT token validation
+    # For now, return a mock user for development
+    # In production, this should:
+    # 1. Decode JWT token
+    # 2. Verify signature
+    # 3. Check expiration
+    # 4. Load user from database
+
+    # Mock user for development
+    from uuid import uuid4
+    mock_user = UserProfile(
+        id=uuid4(),
+        email="dev@example.com"
+    )
+
+    return mock_user
 

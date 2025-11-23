@@ -52,6 +52,19 @@ class ErrorCode(str, Enum):
     STORAGE_UPLOAD_ERROR = "7001"
     STORAGE_DOWNLOAD_ERROR = "7002"
 
+    # Security errors (8xxx)
+    SECURITY_ERROR = "8000"
+    ENCRYPTION_ERROR = "8001"
+    DECRYPTION_ERROR = "8002"
+    AUTHENTICATION_ERROR = "8003"
+    AUTHORIZATION_ERROR = "8004"
+
+    # Media errors (9xxx)
+    MEDIA_ERROR = "9000"
+    MEDIA_DOWNLOAD_ERROR = "9001"
+    MEDIA_PROCESSING_ERROR = "9002"
+    MEDIA_UPLOAD_ERROR = "9003"
+
 
 class ErrorSeverity(str, Enum):
     """Error severity levels."""
@@ -207,5 +220,62 @@ class RateLimitError(BaseAppException):
             error_code=ErrorCode.RATE_LIMITED,
             severity=ErrorSeverity.MEDIUM,
             details=details,
+        )
+
+
+class SecurityError(BaseAppException):
+    """Security-related error."""
+
+    def __init__(
+        self,
+        message: str,
+        error_code: ErrorCode = ErrorCode.SECURITY_ERROR,
+        original_exception: Optional[Exception] = None,
+    ):
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            severity=ErrorSeverity.CRITICAL,
+            original_exception=original_exception,
+        )
+
+
+class MediaError(BaseAppException):
+    """Media processing error."""
+
+    def __init__(
+        self,
+        message: str,
+        error_code: ErrorCode = ErrorCode.MEDIA_ERROR,
+        original_exception: Optional[Exception] = None,
+    ):
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            severity=ErrorSeverity.MEDIUM,
+            original_exception=original_exception,
+        )
+
+
+class ScrapingError(BaseAppException):
+    """Scraping error."""
+
+    def __init__(
+        self,
+        message: str,
+        url: Optional[str] = None,
+        error_code: ErrorCode = ErrorCode.SCRAPING_ERROR,
+        original_exception: Optional[Exception] = None,
+    ):
+        details = {}
+        if url:
+            details["url"] = url
+
+        super().__init__(
+            message=message,
+            error_code=error_code,
+            severity=ErrorSeverity.MEDIUM,
+            details=details,
+            original_exception=original_exception,
         )
 
