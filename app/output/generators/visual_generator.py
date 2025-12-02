@@ -51,7 +51,8 @@ class InfographicGenerator(BaseOutputGenerator):
             title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
             heading_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 32)
             body_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24)
-        except:
+        except (OSError, IOError) as e:
+            logger.warning(f"Failed to load custom fonts, using default: {e}")
             title_font = ImageFont.load_default()
             heading_font = ImageFont.load_default()
             body_font = ImageFont.load_default()

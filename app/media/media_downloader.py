@@ -343,7 +343,7 @@ class MediaDownloader:
                     else:
                         raise MediaError(f"Unsupported media type: {media_type}")
                 except Exception as e:
-                    print(f"Failed to download {url}: {e}")
+                    logger.error(f"Failed to download {url}: {e}")
                     return None
 
         results = await asyncio.gather(*[download_with_semaphore(url) for url in urls])

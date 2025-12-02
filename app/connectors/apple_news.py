@@ -127,8 +127,8 @@ class AppleNewsConnector(BaseConnector):
             if date_str:
                 try:
                     published_at = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
-                except:
-                    pass
+                except (ValueError, AttributeError) as e:
+                    logger.warning(f"Failed to parse date '{date_str}': {e}")
             
             return ContentItem(
                 platform=SourcePlatform.APPLE_NEWS,

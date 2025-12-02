@@ -18,11 +18,14 @@ from app.core.monitoring import MetricsCollector
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
+    import logging
+    logger = logging.getLogger(__name__)
+
     # Startup
-    print("Starting Social Media Radar API...")
+    logger.info("Starting Social Media Radar API...")
     yield
     # Shutdown
-    print("Shutting down Social Media Radar API...")
+    logger.info("Shutting down Social Media Radar API...")
 
 
 app = FastAPI(
