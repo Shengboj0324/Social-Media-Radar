@@ -1,0 +1,167 @@
+# Prometheus alerting rules for LLM infrastructure
+
+groups:
+  - name: llm_alerts
+    interval: 30s
+    rules:
+      # High error rate
+      - alert: HighLLMErrorRate
+        expr: |
+          (
+            sum(rate(llm_errors_total[5m])) by (provider, model)
+            /
+            sum(rate(llm_requests_total[5m])) by (provider, model)
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          component: llm
+        annotations:
+          summary: "High LLM error rate for {{ $labels.provider }}/{{ $labels.model }}"
+          description: "Error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+
+      # Circuit breaker open
+      - alert: LLMCircuitBreakerOpen
+        expr: llm_circuit_breaker_state{state="OPEN"} == 1
+        for: 2m
+        labels:
+          severity: critical
+          component: llm
+        annotations:
+          summary: "LLM circuit breaker is OPEN for {{ $labels.provider }}/{{ $labels.model }}"
+          description: "Circuit breaker has been open for 2 minutes, indicating persistent failures"
+
+      # High latency
+      - alert: HighLLMLatency
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(llm_request_duration_seconds_bucket[5m])) by (le, provider, model)
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
+          component: llm
+        annotations:
+          summary: "High LLM latency for {{ $labels.provider }}/{{ $labels.model }}"
+          description: "P95 latency is {{ $value }}s (threshold: 5s)"
+
+      # Daily cost budget exceeded
+      - alert: DailyCostBudgetExceeded
+        expr: sum(llm_daily_cost) by (provider) > 100
+        for: 1m
+        labels:
+          severity: warning
+          component: llm
+        annotations:
+          summary: "Daily cost budget exceeded for {{ $labels.provider }}"
+          description: "Daily cost is ${{ $value }} (threshold: $100)"
+
+      # Monthly cost budget exceeded
+      - alert: MonthlyCostBudgetExceeded
+        expr: sum(llm_monthly_cost) by (provider) > 3000
+        for: 1m
+        labels:
+          severity: critical
+          component: llm
+        annotations:
+          summary: "Monthly cost budget exceeded for {{ $labels.provider }}"
+          description: "Monthly cost is ${{ $value }} (threshold: $3000)"
+
+      # Rate limit errors
+      - alert: HighRateLimitErrors
+        expr: |
+          sum(rate(llm_rate_limit_errors_total[5m])) by (provider, model) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: llm
+        annotations:
+          summary: "High rate limit errors for {{ $labels.provider }}/{{ $labels.model }}"
+          description: "Rate limit errors: {{ $value }}/s"
+
+      # Timeout errors
+      - alert: HighTimeoutErrors
+        expr: |
+          sum(rate(llm_timeout_errors_total[5m])) by (provider, model) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          component: llm
+        annotations:
+          summary: "High timeout errors for {{ $labels.provider }}/{{ $labels.model }}"
+          description: "Timeout errors: {{ $value }}/s"
+
+      # Low throughput
+      - alert: LowLLMThroughput
+        expr: |
+          sum(rate(llm_requests_total[5m])) < 0.1
+        for: 10m
+        labels:
+          severity: info
+          component: llm
+        annotations:
+          summary: "Low LLM throughput"
+          description: "Request rate is {{ $value }}/s (expected: >0.1/s)"
+
+      # Quality degradation
+      - alert: LLMQualityDegradation
+        expr: |
+          avg(llm_quality_score) by (provider, model) < 0.7
+        for: 10m
+        labels:
+          severity: warning
+          component: llm
+        annotations:
+          summary: "LLM quality degradation for {{ $labels.provider }}/{{ $labels.model }}"
+          description: "Average quality score is {{ $value }} (threshold: 0.7)"
+
+  - name: infrastructure_alerts
+    interval: 30s
+    rules:
+      # High CPU usage
+      - alert: HighCPUUsage
+        expr: |
+          100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value }}% (threshold: 80%)"
+
+      # High memory usage
+      - alert: HighMemoryUsage
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 85
+        for: 5m
+        labels:
+          severity: warning
+          component: infrastructure
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value }}% (threshold: 85%)"
+
+      # Disk space low
+      - alert: DiskSpaceLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) * 100 < 15
+        for: 5m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Available disk space is {{ $value }}% (threshold: 15%)"
+
+      # Service down
+      - alert: ServiceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: infrastructure
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "{{ $labels.instance }} has been down for 2 minutes"
+

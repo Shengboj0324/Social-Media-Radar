@@ -195,9 +195,60 @@ class LLMEnsemble:
         if not valid_summaries:
             raise RuntimeError("All providers failed")
 
-        # For now, return best quality
-        # TODO: Implement actual voting/consensus mechanism
-        return max(valid_summaries, key=lambda s: s.quality.overall_score)
+        # Implement voting/consensus mechanism
+        return self._consensus_vote(valid_summaries)
+
+    def _consensus_vote(self, summaries: List[EnsembleSummary]) -> EnsembleSummary:
+        """Select best summary using consensus voting.
+
+        Voting criteria:
+        1. Quality score (40% weight)
+        2. Sentiment consistency (30% weight)
+        3. Length appropriateness (20% weight)
+        4. Cost efficiency (10% weight)
+        """
+        if len(summaries) == 1:
+            return summaries[0]
+
+        # Calculate average sentiment for consistency check
+        avg_sentiment = sum(s.quality.sentiment_score for s in summaries) / len(summaries)
+
+        # Score each summary
+        scored_summaries = []
+        for summary in summaries:
+            # Quality score (0-1, higher is better)
+            quality_score = summary.quality.overall_score
+
+            # Sentiment consistency (0-1, higher is better)
+            sentiment_diff = abs(summary.quality.sentiment_score - avg_sentiment)
+            sentiment_score = 1.0 - min(sentiment_diff, 1.0)
+
+            # Length appropriateness (0-1, higher is better)
+            # Prefer summaries that are 10-30% of original
+            length_ratio = len(summary.summary) / max(len(summary.original_text), 1)
+            if 0.1 <= length_ratio <= 0.3:
+                length_score = 1.0
+            elif length_ratio < 0.1:
+                length_score = length_ratio / 0.1
+            else:
+                length_score = max(0.0, 1.0 - (length_ratio - 0.3) / 0.7)
+
+            # Cost efficiency (0-1, higher is better)
+            max_cost = max(s.cost for s in summaries)
+            cost_score = 1.0 - (summary.cost / max_cost) if max_cost > 0 else 1.0
+
+            # Weighted total score
+            total_score = (
+                quality_score * 0.4 +
+                sentiment_score * 0.3 +
+                length_score * 0.2 +
+                cost_score * 0.1
+            )
+
+            scored_summaries.append((total_score, summary))
+
+        # Return summary with highest score
+        return max(scored_summaries, key=lambda x: x[0])[1]
 
     async def _generate_with_provider(
         self,

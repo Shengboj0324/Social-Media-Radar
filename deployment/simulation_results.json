@@ -1,0 +1,63 @@
+{
+  "start_time": "2025-12-02T23:46:28.864769",
+  "end_time": "2025-12-02T23:46:33.196143",
+  "total_requests": 5,
+  "successful_requests": 5,
+  "failed_requests": 0,
+  "cache_hits": 0,
+  "total_tokens": 3102,
+  "total_cost": 0.08902,
+  "avg_latency_ms": 364.4733428955078,
+  "scenarios": [
+    {
+      "name": "Market Research Query",
+      "strategy": "quality_optimized",
+      "success": true,
+      "cached": false,
+      "latency_ms": 1416.2311553955078,
+      "tokens": 2055,
+      "cost": 0.06055,
+      "error": null
+    },
+    {
+      "name": "Quick Sentiment Analysis",
+      "strategy": "latency_optimized",
+      "success": true,
+      "cached": false,
+      "latency_ms": 101.67479515075684,
+      "tokens": 246,
+      "cost": 0.00646,
+      "error": null
+    },
+    {
+      "name": "Cost-Optimized Summarization",
+      "strategy": "cost_optimized",
+      "success": true,
+      "cached": false,
+      "latency_ms": 101.42993927001953,
+      "tokens": 204,
+      "cost": 0.00504,
+      "error": null
+    },
+    {
+      "name": "Balanced Analysis",
+      "strategy": "balanced",
+      "success": true,
+      "cached": false,
+      "latency_ms": 101.48787498474121,
+      "tokens": 534,
+      "cost": 0.01534,
+      "error": null
+    },
+    {
+      "name": "Cache Test - Identical Query",
+      "strategy": "cost_optimized",
+      "success": true,
+      "cached": false,
+      "latency_ms": 101.54294967651367,
+      "tokens": 63,
+      "cost": 0.00163,
+      "error": null
+    }
+  ]
+}
