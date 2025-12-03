@@ -233,6 +233,47 @@ class DQNNetwork:
             logger.error(f"Failed to initialize DQN: {e}")
             raise
 
+    def _content_id_to_action_idx(self, content_id: str) -> int:
+        """Convert content ID to deterministic action index.
+
+        Args:
+            content_id: Content ID
+
+        Returns:
+            Action index in range [0, action_dim)
+        """
+        # Use stable hash function (CRC32) for deterministic mapping
+        import zlib
+        hash_value = zlib.crc32(content_id.encode('utf-8'))
+        return hash_value % self.config.action_dim
+
+    def _action_idx_to_content_id(self, action_idx: int, available_actions: List[str]) -> str:
+        """Map action index to content ID from available actions.
+
+        Args:
+            action_idx: Action index from Q-network
+            available_actions: List of available content IDs
+
+        Returns:
+            Selected content ID
+        """
+        # Create deterministic mapping from action indices to available actions
+        # Group available actions by their action indices
+        action_buckets = {}
+        for content_id in available_actions:
+            idx = self._content_id_to_action_idx(content_id)
+            if idx not in action_buckets:
+                action_buckets[idx] = []
+            action_buckets[idx].append(content_id)
+
+        # If action_idx has mapped content, return first one
+        if action_idx in action_buckets:
+            return action_buckets[action_idx][0]
+
+        # Otherwise, find closest action index with content
+        closest_idx = min(action_buckets.keys(), key=lambda x: abs(x - action_idx))
+        return action_buckets[closest_idx][0]
+
     def select_action(
         self,
         state: State,
@@ -293,7 +334,9 @@ class DQNNetwork:
 
             # Select action with highest Q-value
             action_idx = q_values.argmax().item()
-            content_id = available_actions[action_idx % len(available_actions)]
+
+            # Map action index to content ID using deterministic mapping
+            content_id = self._action_idx_to_content_id(action_idx, available_actions)
             confidence = torch.softmax(q_values, dim=1)[0, action_idx].item()
 
             return Action(
@@ -397,8 +440,8 @@ class DQNNetwork:
                     next_state_vec = next_state_vec[:self.config.state_dim]
                 next_states.append(next_state_vec)
 
-                # Action index (hash content_id to action space)
-                action_idx = hash(exp.action.content_id) % self.config.action_dim
+                # Action index (use deterministic mapping)
+                action_idx = self._content_id_to_action_idx(exp.action.content_id)
                 actions.append(action_idx)
 
                 rewards.append(exp.reward)
@@ -535,6 +578,46 @@ class PPOAgent:
         self.trajectory_buffer = []
         self._initialized = False
 
+    def _content_id_to_action_idx(self, content_id: str) -> int:
+        """Convert content ID to deterministic action index.
+
+        Args:
+            content_id: Content ID
+
+        Returns:
+            Action index in range [0, action_dim)
+        """
+        # Use stable hash function (CRC32) for deterministic mapping
+        import zlib
+        hash_value = zlib.crc32(content_id.encode('utf-8'))
+        return hash_value % self.config.action_dim
+
+    def _action_idx_to_content_id(self, action_idx: int, available_actions: List[str]) -> str:
+        """Map action index to content ID from available actions.
+
+        Args:
+            action_idx: Action index from policy network
+            available_actions: List of available content IDs
+
+        Returns:
+            Selected content ID
+        """
+        # Create deterministic mapping from action indices to available actions
+        action_buckets = {}
+        for content_id in available_actions:
+            idx = self._content_id_to_action_idx(content_id)
+            if idx not in action_buckets:
+                action_buckets[idx] = []
+            action_buckets[idx].append(content_id)
+
+        # If action_idx has mapped content, return first one
+        if action_idx in action_buckets:
+            return action_buckets[action_idx][0]
+
+        # Otherwise, find closest action index with content
+        closest_idx = min(action_buckets.keys(), key=lambda x: abs(x - action_idx))
+        return action_buckets[closest_idx][0]
+
     def initialize(self) -> None:
         """Initialize actor and critic networks."""
         if self._initialized:
@@ -668,8 +751,8 @@ class PPOAgent:
             action_idx = action_dist.sample()
             log_prob = action_dist.log_prob(action_idx)
 
-            # Map to content ID
-            content_id = available_actions[action_idx.item() % len(available_actions)]
+            # Map action index to content ID using deterministic mapping
+            content_id = self._action_idx_to_content_id(action_idx.item(), available_actions)
             confidence = action_probs[0, action_idx].item()
 
             action = Action(
@@ -795,8 +878,8 @@ class PPOAgent:
                     state_vec = state_vec[:self.config.state_dim]
                 states.append(state_vec)
 
-                # Action index
-                action_idx = hash(step['action'].content_id) % self.config.action_dim
+                # Action index (use deterministic mapping)
+                action_idx = self._content_id_to_action_idx(step['action'].content_id)
                 actions.append(action_idx)
 
                 old_log_probs.append(step['log_prob'])

@@ -1,7 +1,7 @@
 """SQLAlchemy database models."""
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 from pgvector.sqlalchemy import Vector
@@ -63,7 +63,7 @@ class InterestProfile(Base):
     )
     interest_topics: Mapped[List[str]] = mapped_column(ARRAY(String), default=list)
     negative_filters: Mapped[List[str]] = mapped_column(ARRAY(String), default=list)
-    interest_embedding: Mapped[List[float] | None] = mapped_column(
+    interest_embedding: Mapped[Optional[List[float]]] = mapped_column(
         Vector(1536), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -86,7 +86,7 @@ class PlatformConfigDB(Base):
     )
     platform: Mapped[SourcePlatform] = mapped_column(Enum(SourcePlatform), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    encrypted_credentials: Mapped[str | None] = mapped_column(Text, nullable=True)
+    encrypted_credentials: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     settings: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -113,10 +113,10 @@ class ContentItemDB(Base):
     source_url: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Content
-    author: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    channel: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    author: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    channel: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
-    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    raw_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     media_type: Mapped[MediaType] = mapped_column(Enum(MediaType), nullable=False)
     media_urls: Mapped[List[str]] = mapped_column(ARRAY(Text), default=list)
 
@@ -126,11 +126,11 @@ class ContentItemDB(Base):
 
     # Enrichment
     topics: Mapped[List[str]] = mapped_column(ARRAY(String), default=list)
-    lang: Mapped[str | None] = mapped_column(String(10), nullable=True)
-    embedding: Mapped[List[float] | None] = mapped_column(Vector(1536), nullable=True)
+    lang: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    embedding: Mapped[Optional[List[float]]] = mapped_column(Vector(1536), nullable=True)
 
     # Metadata
-    metadata: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
+    metadata_: Mapped[Dict[str, Any]] = mapped_column("metadata", JSON, default=dict)
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="content_items")
@@ -159,11 +159,11 @@ class ClusterDB(Base):
 
     # Scoring
     relevance_score: Mapped[float] = mapped_column(Float, nullable=False)
-    diversity_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    diversity_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Cross-platform
     platforms_represented: Mapped[List[str]] = mapped_column(ARRAY(String), default=list)
-    perspective_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    perspective_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="clusters")
