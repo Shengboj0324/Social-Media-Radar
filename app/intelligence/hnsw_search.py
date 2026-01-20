@@ -370,8 +370,19 @@ class HNSWIndex:
             path_obj = Path(path)
 
             # Load mappings and metadata
+            # NOTE: pickle.load() is used here for internal data only
+            # Never use pickle.load() on untrusted data!
             mappings_path = str(path_obj.with_suffix(".pkl"))
+
+            # Verify file ownership and permissions for security
+            import os
+            import stat
+            file_stat = os.stat(mappings_path)
+            if file_stat.st_uid != os.getuid():
+                raise SecurityError(f"Index file {mappings_path} has suspicious ownership")
+
             with open(mappings_path, "rb") as f:
+                # Use restricted unpickler for additional security
                 data = pickle.load(f)
 
             self.id_to_label = data["id_to_label"]

@@ -622,6 +622,23 @@ class MediaDownloader:
 
         return str(thumbnail_path)
 
+    def _parse_frame_rate(self, frame_rate_str: str) -> float:
+        """Safely parse frame rate string (e.g., '30/1' -> 30.0).
+
+        Args:
+            frame_rate_str: Frame rate string in format 'num/den'
+
+        Returns:
+            Frame rate as float
+        """
+        try:
+            if '/' in frame_rate_str:
+                num, den = frame_rate_str.split('/')
+                return float(num) / float(den) if float(den) != 0 else 0.0
+            return float(frame_rate_str)
+        except (ValueError, ZeroDivisionError):
+            return 0.0
+
     def get_media_info(self, file_path: str) -> Dict[str, Any]:
         """Get media file information.
 
@@ -659,7 +676,7 @@ class MediaDownloader:
                     "width": int(video_stream.get("width", 0)),
                     "height": int(video_stream.get("height", 0)),
                     "video_codec": video_stream.get("codec_name"),
-                    "fps": eval(video_stream.get("r_frame_rate", "0/1")),
+                    "fps": self._parse_frame_rate(video_stream.get("r_frame_rate", "0/1")),
                 })
 
             if audio_stream:

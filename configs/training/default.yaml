@@ -1,0 +1,105 @@
+# Default Production Training Configuration
+# Social Media Radar - LLM Fine-Tuning
+
+config_version: "1.0.0"
+experiment_name: "social-media-radar-v1"
+
+# Model Configuration
+model:
+  base_model: "meta-llama/Meta-Llama-3.1-8B-Instruct"
+  model_max_length: 4096
+  trust_remote_code: false  # Security: only enable for trusted models
+
+# LoRA Configuration
+lora:
+  enabled: true
+  r: 16  # Rank (higher = more parameters, better quality, slower)
+  alpha: 32  # Scaling factor (typically 2x rank)
+  dropout: 0.05
+  target_modules: null  # Auto-detect for Llama models
+  bias: "none"
+  
+  # QLoRA Quantization (memory efficient)
+  use_4bit: true
+  use_8bit: false
+  bnb_4bit_compute_dtype: "bfloat16"
+  bnb_4bit_quant_type: "nf4"  # NormalFloat4 (recommended)
+  use_nested_quant: true
+
+# Training Hyperparameters
+training:
+  num_epochs: 3
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 4  # Effective batch size = 4 * 4 = 16
+  
+  learning_rate: 0.0002  # 2e-4
+  weight_decay: 0.001
+  max_grad_norm: 1.0  # Gradient clipping
+  
+  warmup_ratio: 0.03  # 3% of training for warmup
+  warmup_steps: 0  # Use ratio instead
+  
+  optimizer: "paged_adamw_32bit"  # Memory-efficient AdamW
+  lr_scheduler: "cosine"  # Cosine annealing
+  
+  precision: "bf16"  # BFloat16 (recommended for modern GPUs)
+  gradient_checkpointing: true  # Save memory
+
+# Data Configuration
+data:
+  train_file: "data/training/train.jsonl"
+  val_file: "data/training/val.jsonl"
+  test_file: null
+  
+  max_examples: null  # No limit
+  quality_threshold: 0.7  # Minimum quality score
+  
+  val_split: 0.1  # 10% validation (if val_file not provided)
+  test_split: 0.0  # No test split
+  
+  shuffle_seed: 42  # Reproducibility
+
+# Checkpoint Configuration
+checkpoint:
+  output_dir: "./checkpoints/social-media-radar-v1"
+  save_strategy: "steps"
+  save_steps: 500
+  save_total_limit: 3  # Keep only 3 best checkpoints
+  
+  load_best_model_at_end: true
+  metric_for_best_model: "eval_loss"
+  greater_is_better: false
+  
+  resume_from_checkpoint: null  # Set to checkpoint path to resume
+
+# Logging Configuration
+logging:
+  logging_dir: "./logs/social-media-radar-v1"
+  logging_strategy: "steps"
+  logging_steps: 10
+  
+  report_to: ["tensorboard"]  # Options: tensorboard, wandb, mlflow
+  
+  eval_strategy: "steps"
+  eval_steps: 500
+  
+  log_level: "info"
+
+# Reproducibility Configuration
+reproducibility:
+  seed: 42
+  deterministic: true  # Enable deterministic algorithms
+  save_environment: true  # Save pip freeze and git info
+  save_rng_state: true  # Save RNG states in checkpoints
+
+# Distributed Training Configuration
+distributed:
+  enabled: false  # Set to true for multi-GPU training
+  backend: "nccl"  # NCCL for NVIDIA GPUs
+  ddp_find_unused_parameters: false
+  ddp_bucket_cap_mb: 25
+  world_size: 1
+  rank: 0
+  local_rank: -1
+

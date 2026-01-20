@@ -9,6 +9,7 @@ Implements:
 """
 
 import time
+from datetime import datetime
 from typing import Callable
 
 from fastapi import Request, Response
@@ -279,7 +280,3 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         
         tokens, _ = self.buckets[client_ip]
         return int(tokens)
-
-
-from datetime import datetime
-
