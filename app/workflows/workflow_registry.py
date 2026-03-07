@@ -386,5 +386,3 @@ class WorkflowRegistry:
             Dictionary of workflow type to definition
         """
         return self._workflows.copy()
-
-

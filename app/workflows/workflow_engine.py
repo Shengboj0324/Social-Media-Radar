@@ -370,5 +370,3 @@ class WorkflowEngine:
         logger.info(f"Workflow {execution_id} cancelled")
 
         return True
-
-

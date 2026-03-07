@@ -155,5 +155,3 @@ class WorkflowExecution(BaseModel):
     # Metadata
     created_at: datetime = Field(default_factory=datetime.utcnow)
     metadata: Dict[str, Any] = Field(default_factory=dict)
-
-

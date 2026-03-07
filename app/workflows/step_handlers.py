@@ -8,7 +8,7 @@ and returns a result dictionary.
 import logging
 from typing import Any, Dict
 
-from app.core.signal_models import ActionableSignal
+from app.core.signal_models import ActionableSignal, SignalType
 from app.intelligence.response_generator import ResponseGenerator
 from app.intelligence.response_playbook import ResponseChannel
 from app.workflows.workflow_models import WorkflowExecution, WorkflowStep
@@ -30,12 +30,22 @@ class WorkflowStepHandlers:
         """
         self.response_generator = response_generator
 
+        # Initialize specialized workflow handlers
+        from app.workflows.alternative_seeker_workflow import AlternativeSeekerWorkflow
+        from app.workflows.competitor_intelligence_workflow import CompetitorIntelligenceWorkflow
+
+        self.alternative_seeker = AlternativeSeekerWorkflow(response_generator)
+        self.competitor_intelligence = CompetitorIntelligenceWorkflow(response_generator)
+
     async def handle_analyze(
         self,
         step: WorkflowStep,
         execution: WorkflowExecution,
     ) -> Dict[str, Any]:
         """Handle ANALYZE step - extract information from signal.
+
+        This method routes to specialized workflow handlers based on
+        the signal type and step ID for advanced analysis.
 
         Args:
             step: Workflow step
@@ -47,10 +57,22 @@ class WorkflowStepHandlers:
         signal_data = execution.context.get("signal", {})
         signal = ActionableSignal(**signal_data)
 
+        logger.info(f"Analyzing signal {signal.id} (step: {step.id})")
+
+        # Route to specialized handlers based on step ID and signal type
+        if step.id == "analyze_intent" and signal.signal_type == SignalType.LEAD_OPPORTUNITY:
+            # Use Alternative Seeker workflow
+            return await self.alternative_seeker.analyze_lead_intent(step, execution)
+
+        elif step.id == "analyze_complaint" and signal.signal_type == SignalType.COMPETITOR_WEAKNESS:
+            # Use Competitor Intelligence workflow
+            return await self.competitor_intelligence.analyze_competitor_complaint(step, execution)
+
+        # Default generic analysis
         config = step.config
         extract_fields = config.get("extract_fields", [])
 
-        logger.info(f"Analyzing signal {signal.id} for fields: {extract_fields}")
+        logger.info(f"Using generic analysis for fields: {extract_fields}")
 
         # Extract requested fields from signal metadata
         analysis = {}
@@ -87,6 +109,9 @@ class WorkflowStepHandlers:
     ) -> Dict[str, Any]:
         """Handle SCORE step - score/evaluate something.
 
+        This method routes to specialized workflow handlers for
+        advanced scoring logic.
+
         Args:
             step: Workflow step
             execution: Workflow execution
@@ -96,13 +121,21 @@ class WorkflowStepHandlers:
         """
         signal_data = execution.context.get("signal", {})
         signal = ActionableSignal(**signal_data)
-        analysis = execution.context.get("analysis", {})
 
+        logger.info(f"Scoring signal {signal.id} (step: {step.id})")
+
+        # Route to specialized handlers
+        if step.id == "qualify_lead" and signal.signal_type == SignalType.LEAD_OPPORTUNITY:
+            # Use Alternative Seeker workflow
+            return await self.alternative_seeker.qualify_lead(step, execution)
+
+        # Default generic scoring
+        analysis = execution.context.get("analysis", {})
         config = step.config
         scoring_criteria = config.get("scoring_criteria", [])
         min_threshold = config.get("min_threshold", 0.5)
 
-        logger.info(f"Scoring signal {signal.id} with criteria: {scoring_criteria}")
+        logger.info(f"Using generic scoring with criteria: {scoring_criteria}")
 
         scores = {}
 
@@ -173,6 +206,9 @@ class WorkflowStepHandlers:
     ) -> Dict[str, Any]:
         """Handle GENERATE step - generate content using LLM.
 
+        This method routes to specialized workflow handlers for
+        advanced content generation with personalization.
+
         Args:
             step: Workflow step
             execution: Workflow execution
@@ -183,10 +219,26 @@ class WorkflowStepHandlers:
         signal_data = execution.context.get("signal", {})
         signal = ActionableSignal(**signal_data)
 
+        logger.info(f"Generating content for signal {signal.id} (step: {step.id})")
+
+        # Route to specialized handlers
+        if step.id == "generate_response" and signal.signal_type == SignalType.LEAD_OPPORTUNITY:
+            # Use Alternative Seeker workflow
+            return await self.alternative_seeker.generate_personalized_response(step, execution)
+
+        elif step.id == "generate_content" and signal.signal_type == SignalType.COMPETITOR_WEAKNESS:
+            # Use Competitor Intelligence workflow
+            return await self.competitor_intelligence.generate_positioning_content(step, execution)
+
+        elif step.id == "identify_positioning" and signal.signal_type == SignalType.COMPETITOR_WEAKNESS:
+            # This is actually an ANALYZE step but called from GENERATE workflow
+            return await self.competitor_intelligence.identify_positioning_angle(step, execution)
+
+        # Default generic generation
         config = step.config
         num_variants = config.get("num_variants", 3)
 
-        logger.info(f"Generating {num_variants} response variants for signal {signal.id}")
+        logger.info(f"Using generic generation: {num_variants} variants")
 
         # Generate response variants
         variants = await self.response_generator.generate_variants(
@@ -267,8 +319,6 @@ class WorkflowStepHandlers:
         """
         signal_data = execution.context.get("signal", {})
         signal = ActionableSignal(**signal_data)
-
-        config = step.config
 
         logger.info(f"Executing action for signal {signal.id}")
 
@@ -409,5 +459,3 @@ class WorkflowStepHandlers:
 
         # Cap at 1.0
         return min(score, 1.0)
-
-
