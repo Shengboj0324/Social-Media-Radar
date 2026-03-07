@@ -33,9 +33,11 @@ class WorkflowStepHandlers:
         # Initialize specialized workflow handlers
         from app.workflows.alternative_seeker_workflow import AlternativeSeekerWorkflow
         from app.workflows.competitor_intelligence_workflow import CompetitorIntelligenceWorkflow
+        from app.workflows.churn_prevention_workflow import ChurnPreventionWorkflow
 
         self.alternative_seeker = AlternativeSeekerWorkflow(response_generator)
         self.competitor_intelligence = CompetitorIntelligenceWorkflow(response_generator)
+        self.churn_prevention = ChurnPreventionWorkflow(response_generator)
 
     async def handle_analyze(
         self,
@@ -128,6 +130,10 @@ class WorkflowStepHandlers:
         if step.id == "qualify_lead" and signal.signal_type == SignalType.LEAD_OPPORTUNITY:
             # Use Alternative Seeker workflow
             return await self.alternative_seeker.qualify_lead(step, execution)
+
+        elif step.id == "assess_severity" and signal.signal_type == SignalType.CHURN_RISK:
+            # Use Churn Prevention workflow
+            return await self.churn_prevention.assess_churn_risk(step, execution)
 
         # Default generic scoring
         analysis = execution.context.get("analysis", {})
@@ -233,6 +239,10 @@ class WorkflowStepHandlers:
         elif step.id == "identify_positioning" and signal.signal_type == SignalType.COMPETITOR_WEAKNESS:
             # This is actually an ANALYZE step but called from GENERATE workflow
             return await self.competitor_intelligence.identify_positioning_angle(step, execution)
+
+        elif step.id == "draft_retention_outreach" and signal.signal_type == SignalType.CHURN_RISK:
+            # Use Churn Prevention workflow
+            return await self.churn_prevention.generate_retention_content(step, execution)
 
         # Default generic generation
         config = step.config
