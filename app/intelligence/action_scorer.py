@@ -18,7 +18,7 @@ Design principles:
 
 import logging
 import math
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, Optional
 
 from app.core.models import ContentItem, SourcePlatform
@@ -59,7 +59,7 @@ class ActionScorer:
 
         # Validate weights sum to ~1.0
         weight_sum = sum(abs(v) for v in self.weights.values())
-        if not (0.95 <= weight_sum <= 1.05):
+        if not 0.95 <= weight_sum <= 1.05:
             logger.warning(
                 f"Weights sum to {weight_sum:.2f}, expected ~1.0. "
                 "Normalizing weights."
@@ -403,4 +403,3 @@ class ActionScorer:
                 risk += 0.15
 
         return min(1.0, risk)
-

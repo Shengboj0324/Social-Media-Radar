@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from app.core.models import Cluster, ContentItem
+from app.core.models import Cluster
 from app.llm.client_base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
@@ -204,7 +204,7 @@ class ClusterSummarizer:
 
     def _create_fallback_summary(self, cluster: Cluster) -> Dict[str, Any]:
         """Create fallback summary when LLM fails."""
-        platforms = list(set([item.source_platform.value for item in cluster.items]))
+        platforms = list({item.source_platform.value for item in cluster.items})
 
         # Extract key points from titles
         key_points = [item.title for item in cluster.items[:3]]
@@ -268,4 +268,3 @@ class ClusterSummarizer:
         )
 
         return "\n".join(prompt_parts)
-

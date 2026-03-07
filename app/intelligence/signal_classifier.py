@@ -26,7 +26,6 @@ from app.core.signal_models import (
     SignalType,
     ActionType,
     ResponseTone,
-    SignalStatus,
 )
 from app.llm.router import get_router, RoutingStrategy
 
