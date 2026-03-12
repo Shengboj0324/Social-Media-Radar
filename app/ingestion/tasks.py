@@ -1,23 +1,19 @@
 """Celery tasks for content ingestion and processing."""
 
+import logging
 from datetime import datetime, timedelta
-from typing import List
 from uuid import UUID
 
 from celery import Task
 from sqlalchemy import select
 
-from app.connectors.base import BaseConnector, ConnectorConfig
-from app.connectors.reddit import RedditConnector
-from app.connectors.rss import RSSConnector
-from app.connectors.youtube import YouTubeConnector
+from app.connectors.base import ConnectorConfig
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.db_models import ContentItemDB, PlatformConfigDB, User
-from app.core.models import ContentItem, SourcePlatform
+from app.core.models import ContentItem
 from app.ingestion.celery_app import celery_app
 from app.llm.openai_client import OpenAISyncEmbeddingClient
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +47,7 @@ def fetch_all_sources(self):
     db = self.db
 
     # Get all active users
-    users = db.execute(select(User).where(User.is_active == True)).scalars().all()
+    users = db.execute(select(User).where(User.is_active.is_(True))).scalars().all()
 
     for user in users:
         # Get user's platform configs
@@ -59,7 +55,7 @@ def fetch_all_sources(self):
             db.execute(
                 select(PlatformConfigDB)
                 .where(PlatformConfigDB.user_id == user.id)
-                .where(PlatformConfigDB.enabled == True)
+                .where(PlatformConfigDB.enabled.is_(True))
             )
             .scalars()
             .all()
@@ -97,7 +93,7 @@ def fetch_source_content(self, user_id: UUID, config_id: UUID):
         except Exception as e:
             logger.error(f"Failed to decrypt credentials: {e}")
             # Security: Do not fall back to empty credentials in production
-            raise ValueError(f"Credential decryption failed: {e}")
+            raise ValueError(f"Credential decryption failed: {e}") from e
 
     # Create connector using registry
     from app.connectors.registry import ConnectorRegistry
@@ -219,4 +215,3 @@ def cleanup_old_content(self):
 
 # Connector creation is now handled by ConnectorRegistry
 # See app/connectors/registry.py for all 13 supported platforms
-

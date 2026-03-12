@@ -40,4 +40,3 @@ celery_app.conf.beat_schedule = {
 
 # Auto-discover tasks
 celery_app.autodiscover_tasks(["app.ingestion"])
-
