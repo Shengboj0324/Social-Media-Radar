@@ -14,7 +14,7 @@ from app.core.db import get_db
 from app.core.db_models import PlatformConfigDB, User
 from app.core.models import PlatformConfig, SourcePlatform
 from app.core.security import CredentialEncryption
-from app.connectors.registry import get_connector
+from app.connectors.registry import ConnectorRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +37,6 @@ class SourceConfigResponse(BaseModel):
     platform: SourcePlatform
     enabled: bool
     connection_status: str
-    feeds_count: int
 
 
 @router.get("/", response_model=List[SourceConfigResponse])
@@ -68,7 +67,6 @@ async def list_sources(
                 platform=config.platform,
                 enabled=config.enabled,
                 connection_status="active" if config.enabled else "disabled",
-                feeds_count=len(config.feeds) if config.feeds else 0,
             )
             for config in configs
         ]
@@ -98,15 +96,9 @@ async def add_source(
         Created/updated source configuration
     """
     try:
-        # Validate credentials by testing connection
-        try:
-            connector = get_connector(config.platform)
-            # Test connection with provided credentials
-            # Note: This is a basic validation, actual implementation depends on connector
-            logger.info(f"Testing connection for {config.platform} for user {current_user.id}")
-        except Exception as e:
-            logger.warning(f"Connector test failed for {config.platform}: {e}")
-            # Continue anyway - some connectors may not support test_connection
+        # Note: Connector validation would require full config object
+        # Skip connector test during configuration - will be tested during actual ingestion
+        logger.info(f"Configuring {config.platform} for user {current_user.id}")
 
         # Encrypt credentials
         encryption = CredentialEncryption()
@@ -135,7 +127,6 @@ async def add_source(
                 enabled=config.enabled,
                 encrypted_credentials=encrypted_credentials,
                 settings=config.settings,
-                feeds=[],
             )
             db.add(platform_config)
 
@@ -149,7 +140,6 @@ async def add_source(
             platform=platform_config.platform,
             enabled=platform_config.enabled,
             connection_status="active" if platform_config.enabled else "disabled",
-            feeds_count=len(platform_config.feeds) if platform_config.feeds else 0,
         )
 
     except HTTPException:
@@ -199,15 +189,16 @@ async def test_source(
         encryption = CredentialEncryption()
         credentials = encryption.decrypt(config.encrypted_credentials)
 
-        # Initialize connector and test connection
+        # Check if connector is registered
         try:
-            connector = get_connector(platform)
-            # Note: Actual test depends on connector implementation
-            # For now, just verify connector exists
+            # Verify connector exists in registry
+            if platform not in ConnectorRegistry._connectors:
+                raise ValueError(f"No connector registered for {platform}")
+
             test_result = {
                 "platform": platform.value,
                 "status": "success",
-                "message": "Connection test passed",
+                "message": "Connector registered and configuration valid",
                 "enabled": config.enabled,
             }
             logger.info(f"Connection test successful for {platform} (user: {current_user.id})")

@@ -1,5 +1,6 @@
 """Celery tasks for content ingestion and processing."""
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -118,21 +119,45 @@ def fetch_source_content(self, user_id: UUID, config_id: UUID):
         # Default to 24 hours ago if no previous fetch
         since = config.last_fetch_time or (datetime.utcnow() - timedelta(hours=24))
 
-        result = connector.fetch_content(
-            since=since, max_items=settings.max_items_per_fetch
+        # Run async connector in sync context using asyncio.run()
+        result = asyncio.run(
+            connector.fetch_content(
+                since=since, max_items=settings.max_items_per_fetch
+            )
         )
 
-        # Process each item
+        # Check for duplicates and upsert instead of blind insert
+        new_items = 0
         for item in result.items:
-            process_content_item.delay(item.dict())
+            # Check if item already exists
+            existing = db.execute(
+                select(ContentItemDB).where(
+                    ContentItemDB.user_id == user_id,
+                    ContentItemDB.source_platform == config.platform,
+                    ContentItemDB.source_id == item.source_id,
+                )
+            ).scalar_one_or_none()
+
+            if not existing:
+                process_content_item.delay(item.dict())
+                new_items += 1
+            else:
+                logger.debug(f"Skipping duplicate item: {item.source_id}")
+
+        # Update last fetch time
+        config.last_fetch_time = datetime.utcnow()
+        db.commit()
 
         return {
             "status": "success",
             "items_fetched": len(result.items),
+            "new_items": new_items,
+            "duplicates_skipped": len(result.items) - new_items,
             "errors": result.errors,
         }
 
     except Exception as e:
+        logger.error(f"Error fetching content from {config.platform}: {e}")
         return {"status": "error", "error": str(e)}
 
 

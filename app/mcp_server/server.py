@@ -4,9 +4,12 @@ This server exposes tools that can be used by MCP-compatible clients
 to interact with the Social Media Radar system.
 """
 
+import logging
 from typing import Any, Dict, List
 
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class MCPTool(BaseModel):
@@ -214,13 +217,14 @@ class MCPServer:
         """Execute configure_source tool by calling sources API endpoint."""
         try:
             from app.core.db import get_db
-            from app.core.db_models import SourceConfig
+            from app.core.db_models import PlatformConfigDB
 
             async for db in get_db():
                 # Create or update source configuration
-                source = SourceConfig(
+                source = PlatformConfigDB(
                     user_id=params.get("user_id"),
                     platform=params.get("platform"),
+                    enabled=True,
                     settings=params.get("settings", {})
                 )
                 db.add(source)
@@ -233,13 +237,13 @@ class MCPServer:
         """Execute list_sources tool by calling sources API endpoint."""
         try:
             from app.core.db import get_db
-            from app.core.db_models import SourceConfig
+            from app.core.db_models import PlatformConfigDB
             from sqlalchemy import select
 
             async for db in get_db():
                 result = await db.execute(
-                    select(SourceConfig).where(
-                        SourceConfig.user_id == params.get("user_id")
+                    select(PlatformConfigDB).where(
+                        PlatformConfigDB.user_id == params.get("user_id")
                     )
                 )
                 sources = result.scalars().all()
@@ -247,7 +251,7 @@ class MCPServer:
                     "sources": [
                         {
                             "id": str(s.id),
-                            "platform": s.platform,
+                            "platform": s.platform.value,
                             "enabled": s.enabled
                         }
                         for s in sources
@@ -260,16 +264,31 @@ class MCPServer:
     async def _get_cluster_detail(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Execute get_cluster_detail tool by calling digest API endpoint."""
         try:
-            from app.intelligence.clustering import ContentClusterer
+            from app.core.db import get_db
+            from app.core.db_models import ClusterDB
+            from sqlalchemy import select
 
-            clusterer = ContentClusterer()
             cluster_id = params.get("cluster_id")
-            # Note: This would need to fetch cluster data from storage
-            return {
-                "cluster_id": cluster_id,
-                "status": "success",
-                "message": "Cluster detail retrieval requires storage implementation"
-            }
+
+            async for db in get_db():
+                result = await db.execute(
+                    select(ClusterDB).where(ClusterDB.id == cluster_id)
+                )
+                cluster = result.scalar_one_or_none()
+
+                if not cluster:
+                    return {"error": "Cluster not found", "status": "failed"}
+
+                return {
+                    "cluster_id": str(cluster.id),
+                    "topic": cluster.topic,
+                    "summary": cluster.summary,
+                    "keywords": cluster.keywords,
+                    "item_count": len(cluster.item_ids),
+                    "relevance_score": cluster.relevance_score,
+                    "platforms": cluster.platforms_represented,
+                    "status": "success"
+                }
         except Exception as e:
             return {"error": str(e), "status": "failed"}
 

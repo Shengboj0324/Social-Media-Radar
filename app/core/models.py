@@ -71,6 +71,9 @@ class ContentItem(BaseModel):
     class Config:
         """Pydantic config."""
 
+        # Allow mutation for digest pipeline processing
+        validate_assignment = True
+
         json_schema_extra = {
             "example": {
                 "source_platform": "reddit",
@@ -147,6 +150,12 @@ class Cluster(BaseModel):
     # Cross-platform analysis
     platforms_represented: List[SourcePlatform] = Field(default_factory=list)
     perspective_summary: Optional[str] = None
+
+    class Config:
+        """Pydantic config."""
+
+        # Allow mutation for digest pipeline processing
+        validate_assignment = True
 
 
 class DigestRequest(BaseModel):

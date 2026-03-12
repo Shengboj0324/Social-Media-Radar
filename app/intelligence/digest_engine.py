@@ -149,7 +149,7 @@ class DigestEngine:
                 topics=db_item.topics or [],
                 lang=db_item.lang,
                 embedding=db_item.embedding,
-                metadata=db_item.metadata or {},
+                metadata=db_item.metadata_ or {},
             )
             items.append(item)
 
@@ -161,7 +161,11 @@ class DigestEngine:
         items: List[ContentItem],
         db: AsyncSession,
     ) -> List[ContentItem]:
-        """Score items for relevance using user's interest profile."""
+        """Score items for relevance using user's interest profile.
+
+        Note: Scores are stored in item.metadata['relevance_score'] to avoid
+        mutating Pydantic models.
+        """
         # Fetch user's interest profile from database
         # Note: Interest profile is optional - defaults to general scoring
         from app.core.db_models import User
@@ -178,8 +182,10 @@ class DigestEngine:
 
         scorer = RelevanceScorer(interest_profile=interest_profile)
 
+        # Store scores in metadata to avoid mutating Pydantic models
         for item in items:
-            item.relevance_score = scorer.score_item(item)
+            score = scorer.score_item(item)
+            item.metadata['relevance_score'] = score
 
         return items
 

@@ -15,6 +15,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -98,6 +99,7 @@ class PlatformConfigDB(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+    last_fetch_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="platform_configs")
@@ -107,6 +109,10 @@ class ContentItemDB(Base):
     """Content item database model."""
 
     __tablename__ = "content_items"
+    __table_args__ = (
+        # Unique constraint to prevent duplicate content from same source
+        UniqueConstraint('user_id', 'source_platform', 'source_id', name='uq_user_platform_source'),
+    )
 
     id: Mapped[UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid4)
     user_id: Mapped[UUID] = mapped_column(

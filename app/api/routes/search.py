@@ -86,7 +86,7 @@ async def search_content(
         result = await db.execute(query)
         db_items = result.scalars().all()
 
-        # Convert to ContentItem models
+        # Convert to ContentItem models using proper mapper
         items = []
         for db_item in db_items:
             items.append(ContentItem(
@@ -96,13 +96,17 @@ async def search_content(
                 source_id=db_item.source_id,
                 source_url=db_item.source_url,
                 author=db_item.author,
+                channel=db_item.channel,
                 title=db_item.title,
                 raw_text=db_item.raw_text,
+                media_type=db_item.media_type,
+                media_urls=db_item.media_urls or [],
                 published_at=db_item.published_at,
                 fetched_at=db_item.fetched_at,
-                media_urls=db_item.media_urls or [],
                 topics=db_item.topics or [],
-                engagement_score=db_item.engagement_score,
+                lang=db_item.lang,
+                embedding=db_item.embedding,
+                metadata=db_item.metadata_ or {},
             ))
 
         logger.info(f"Search query '{request.query}' returned {len(items)} results for user {current_user.id}")
