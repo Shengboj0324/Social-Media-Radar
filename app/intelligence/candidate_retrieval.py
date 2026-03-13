@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from app.domain.normalized_models import NormalizedObservation
 from app.domain.inference_models import SignalType
-from app.intelligence.hnsw_search import HNSWIndex
+from app.intelligence.hnsw_search import HNSWIndex, HNSWConfig, SearchResult
 
 logger = logging.getLogger(__name__)
 
@@ -91,20 +91,25 @@ class CandidateRetriever:
         """Build HNSW index from exemplar embeddings."""
         if not self.exemplar_bank:
             return
-        
+
         # Extract embeddings
         embeddings = np.array([ex.embedding for ex in self.exemplar_bank])
-        
-        # Build HNSW index
-        self.hnsw_index = HNSWIndex(
+
+        # Build HNSW index with proper config
+        config = HNSWConfig(
             dimension=len(embeddings[0]),
             max_elements=len(embeddings),
         )
-        
+        self.hnsw_index = HNSWIndex(config=config)
+
         # Add exemplars to index
         for i, exemplar in enumerate(self.exemplar_bank):
-            self.hnsw_index.add_item(embeddings[i], i)
-        
+            # Use add_vector with string ID
+            self.hnsw_index.add_vector(
+                id=str(i),
+                vector=embeddings[i].tolist(),
+            )
+
         logger.info(f"Built HNSW index with {len(self.exemplar_bank)} exemplars")
     
     def _initialize_platform_priors(self) -> Dict[str, Dict[SignalType, float]]:
@@ -133,14 +138,14 @@ class CandidateRetriever:
             },
         }
     
-    async def retrieve_candidates(
+    def retrieve_candidates(
         self, observation: NormalizedObservation
     ) -> List[SignalCandidate]:
         """Retrieve candidate signal types for an observation.
-        
+
         Args:
             observation: Normalized observation
-            
+
         Returns:
             List of signal candidates with scores
         """
@@ -206,22 +211,30 @@ class CandidateRetriever:
         if not observation.embedding or not self.hnsw_index:
             return []
 
-        # Search for nearest neighbors
-        neighbors, distances = self.hnsw_index.search(
-            np.array(observation.embedding), k=self.top_k
+        # Search for nearest neighbors - returns List[SearchResult]
+        results = self.hnsw_index.search(
+            query_vector=observation.embedding,
+            k=self.top_k
         )
 
         # Convert to candidates
         candidates = []
-        for idx, distance in zip(neighbors, distances):
-            if idx < len(self.exemplar_bank):
-                exemplar = self.exemplar_bank[idx]
-                similarity = 1.0 - distance  # Convert distance to similarity
-                candidates.append((
-                    exemplar.signal_type,
-                    similarity,
-                    f"Similar to exemplar: '{exemplar.text[:50]}...' (sim={similarity:.2f})"
-                ))
+        for result in results:
+            # Parse ID back to index
+            try:
+                idx = int(result.id)
+                if idx < len(self.exemplar_bank):
+                    exemplar = self.exemplar_bank[idx]
+                    # Distance is already in [0, 1] for cosine, convert to similarity
+                    similarity = 1.0 - result.distance
+                    candidates.append((
+                        exemplar.signal_type,
+                        max(0.0, min(1.0, similarity)),  # Clamp to [0, 1]
+                        f"Similar to exemplar: '{exemplar.text[:50]}...' (sim={similarity:.2f})"
+                    ))
+            except (ValueError, IndexError) as e:
+                logger.warning(f"Failed to parse search result: {e}")
+                continue
 
         return candidates
 

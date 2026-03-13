@@ -93,8 +93,8 @@ class NormalizationEngine:
         # Merge and normalize text content
         normalized_text = self._merge_and_normalize_text(raw)
 
-        # Detect language
-        original_language = await self._detect_language(normalized_text)
+        # Detect language (sync operation)
+        original_language = self._detect_language(normalized_text)
 
         # Translate if needed
         translated_text = None
@@ -119,6 +119,9 @@ class NormalizationEngine:
 
         # Extract topics and keywords
         topics, keywords = self._extract_topics_keywords(normalized_text, entities)
+
+        # Compute engagement features from platform metadata
+        engagement_velocity, virality_score = self._compute_engagement_features(raw)
 
         # Create normalized observation
         normalized = NormalizedObservation(
@@ -145,6 +148,8 @@ class NormalizationEngine:
             quality=quality,
             quality_score=quality_score,
             completeness_score=completeness_score,
+            engagement_velocity=engagement_velocity,
+            virality_score=virality_score,
             embedding=embedding,
         )
         
@@ -175,7 +180,7 @@ class NormalizationEngine:
 
         return normalized
 
-    async def _detect_language(self, text: str) -> Optional[str]:
+    def _detect_language(self, text: str) -> Optional[str]:
         """Detect language of text.
 
         Args:
@@ -235,8 +240,8 @@ class NormalizationEngine:
             return []
 
         try:
-            # Extract entities using entity extractor
-            result = await self.entity_extractor.extract_entities_async(text)
+            # Extract entities using entity extractor (async method)
+            result = await self.entity_extractor.extract_entities(text)
 
             # Convert to EntityMention objects
             entities = []
@@ -318,6 +323,50 @@ class NormalizationEngine:
             quality = ContentQuality.LOW
 
         return quality, min(quality_score, 1.0), min(completeness_score, 1.0)
+
+    def _compute_engagement_features(
+        self, raw: RawObservation
+    ) -> tuple[Optional[float], Optional[float]]:
+        """Compute engagement velocity and virality score from platform metadata.
+
+        Args:
+            raw: Raw observation
+
+        Returns:
+            Tuple of (engagement_velocity, virality_score)
+        """
+        if not raw.platform_metadata:
+            return None, None
+
+        metadata = raw.platform_metadata
+
+        # Try to extract engagement metrics from platform metadata
+        # Different platforms use different field names
+        likes = metadata.get('likes', metadata.get('upvotes', metadata.get('score', 0)))
+        shares = metadata.get('shares', metadata.get('retweets', metadata.get('crossposts', 0)))
+        comments = metadata.get('comments', metadata.get('num_comments', metadata.get('replies', 0)))
+
+        if not any([likes, shares, comments]):
+            return None, None
+
+        # Compute engagement velocity (engagement per hour)
+        engagement_velocity = None
+        if raw.published_at:
+            hours_since_publish = (
+                datetime.now(timezone.utc) - raw.published_at
+            ).total_seconds() / 3600
+
+            if hours_since_publish > 0:
+                total_engagement = likes + shares + comments
+                engagement_velocity = total_engagement / hours_since_publish
+
+        # Compute virality score (shares / (likes + comments + 1))
+        virality_score = None
+        if shares > 0:
+            virality_score = shares / (likes + comments + 1)
+            virality_score = min(virality_score, 1.0)  # Clamp to [0, 1]
+
+        return engagement_velocity, virality_score
 
     def _detect_sentiment(self, text: str) -> Optional[SentimentPolarity]:
         """Detect sentiment polarity of text.

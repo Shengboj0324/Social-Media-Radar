@@ -103,9 +103,9 @@ class InferencePipeline:
             logger.debug("Stage 1: Normalization")
             normalized = await self.normalization_engine.normalize(raw_observation)
         
-        # Stage 2: Candidate Retrieval
+        # Stage 2: Candidate Retrieval (sync operation)
         logger.debug("Stage 2: Candidate Retrieval")
-        candidates = await self.candidate_retriever.retrieve_candidates(normalized)
+        candidates = self.candidate_retriever.retrieve_candidates(normalized)
         logger.debug(f"Retrieved {len(candidates)} candidates")
         
         # Stage 3: LLM Adjudication

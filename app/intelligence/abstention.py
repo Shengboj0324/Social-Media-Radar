@@ -187,8 +187,8 @@ class AbstentionDecider:
         unsafe_keywords = [
             "violence", "hate", "illegal", "explicit", "nsfw"
         ]
-        
-        text = observation.merged_text.lower()
+
+        text = (observation.normalized_text or "").lower()
         return any(keyword in text for keyword in unsafe_keywords)
     
     def _has_policy_violation(self, observation: NormalizedObservation) -> bool:
