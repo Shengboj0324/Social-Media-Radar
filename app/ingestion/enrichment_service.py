@@ -15,8 +15,7 @@ import asyncio
 
 from app.core.models import ContentItem
 from app.intelligence.entity_extractor import EntityExtractor
-from app.llm.router import get_router
-from app.llm.base_client import EmbeddingResponse
+from app.llm.openai_client import OpenAIEmbeddingClient
 
 logger = logging.getLogger(__name__)
 
@@ -107,11 +106,15 @@ class EnrichmentService:
         else:
             self.entity_extractor = None
 
-        # Initialize LLM router for embeddings
+        # Dedicated embedding client (LLMRouter does not expose embed())
         if enable_embedding_generation:
-            self.llm_router = get_router()
+            try:
+                self._embedding_client: Optional[OpenAIEmbeddingClient] = OpenAIEmbeddingClient()
+            except Exception:
+                logger.warning("OpenAIEmbeddingClient unavailable; embeddings disabled")
+                self._embedding_client = None
         else:
-            self.llm_router = None
+            self._embedding_client = None
 
         # Metrics
         self.metrics = EnrichmentMetrics()
@@ -151,7 +154,7 @@ class EnrichmentService:
             if self.enable_entity_extraction and self.entity_extractor:
                 tasks.append(self._extract_entities(text))
 
-            if self.enable_embedding_generation and self.llm_router:
+            if self.enable_embedding_generation and self._embedding_client:
                 tasks.append(self._generate_embedding(text))
 
             # Execute all tasks concurrently
@@ -179,7 +182,7 @@ class EnrichmentService:
                     # Store entities in metadata
                     item.metadata['entities'] = entities_result
 
-            if self.enable_embedding_generation and self.llm_router:
+            if self.enable_embedding_generation and self._embedding_client:
                 embedding_result = results[result_index]
                 result_index += 1
                 if not isinstance(embedding_result, Exception):
@@ -320,24 +323,22 @@ class EnrichmentService:
             return {}
 
     async def _generate_embedding(self, text: str) -> Optional[List[float]]:
-        """Generate embedding for text.
+        """Generate embedding for text via OpenAIEmbeddingClient.
 
         Args:
             text: Text to embed
 
         Returns:
-            Embedding vector
+            Embedding vector or None on failure
         """
         try:
-            if not self.llm_router:
+            if not self._embedding_client:
                 return None
 
-            # Generate embedding using LLM router
-            response = await self.llm_router.embed(text)
-
-            if isinstance(response, EmbeddingResponse):
-                logger.debug(f"Generated embedding of dimension {len(response.embedding)}")
-                return response.embedding
+            response = await self._embedding_client.get_embedding(text)
+            if response:
+                logger.debug(f"Generated embedding of dimension {len(response)}")
+                return response
 
             return None
 

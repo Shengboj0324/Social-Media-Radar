@@ -495,10 +495,11 @@ class AlternativeSeekerWorkflow:
 
         # Generate variants
         num_variants = step.config.get("num_variants", 3)
+        channel = self._resolve_channel(enhanced_signal, step.config)
         variants = await self.response_generator.generate_variants(
             signal=enhanced_signal,
             num_variants=num_variants,
-            channel=ResponseChannel.REDDIT,  # TODO: Make configurable
+            channel=channel,
         )
 
         # Store best variant
@@ -514,3 +515,22 @@ class AlternativeSeekerWorkflow:
             "best_content": variants[0].content if variants else "",
             "personalization_applied": True,
         }
+
+    def _resolve_channel(
+        self,
+        signal: ActionableSignal,
+        config: Dict[str, Any],
+    ) -> ResponseChannel:
+        """Resolve target ResponseChannel from step config or signal, defaulting to REDDIT."""
+        config_channel = config.get("channel")
+        if config_channel:
+            try:
+                return ResponseChannel(config_channel)
+            except ValueError:
+                pass
+        if signal.suggested_channel:
+            try:
+                return ResponseChannel(signal.suggested_channel.lower())
+            except ValueError:
+                pass
+        return ResponseChannel.REDDIT

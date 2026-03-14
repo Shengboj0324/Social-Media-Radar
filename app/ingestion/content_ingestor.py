@@ -208,12 +208,14 @@ class ContentIngestor:
         # Build priority queue
         source_priorities = []
         for config in platform_configs:
+            settings = config.settings or {}
             priority = SourcePriority(
                 platform=config.platform,
                 config_id=config.id,
-                priority=config.settings.get("priority", 1.0) if config.settings else 1.0,
+                priority=settings.get("priority", 1.0),
                 last_fetch=config.last_fetch_time,
-                consecutive_errors=0,  # TODO: Track in database
+                # Persisted in the settings JSON blob to avoid a schema migration
+                consecutive_errors=int(settings.get("consecutive_errors", 0)),
             )
             source_priorities.append(priority)
 
@@ -333,8 +335,11 @@ class ContentIngestor:
                 errors=len(result.errors),
             )
 
-            # Update last fetch time
+            # Update last fetch time and reset consecutive error counter on success
             config.last_fetch_time = datetime.utcnow()
+            settings = dict(config.settings or {})
+            settings["consecutive_errors"] = 0
+            config.settings = settings
             await self.db.commit()
 
             logger.info(
@@ -348,12 +353,24 @@ class ContentIngestor:
             logger.warning(f"Rate limit hit for {config.platform}: {e}")
             self._set_rate_limit(config.platform, e.reset_at)
             self.metrics.record_fetch(config.platform, 0, 0, errors=1)
+            await self._increment_error_count(config)
             return []
 
         except Exception as e:
             logger.error(f"Error fetching from {config.platform}: {e}", exc_info=True)
             self.metrics.record_fetch(config.platform, 0, 0, errors=1)
+            await self._increment_error_count(config)
             return []
+
+    async def _increment_error_count(self, config: "PlatformConfigDB") -> None:
+        """Persist consecutive error count into config.settings JSON."""
+        try:
+            settings = dict(config.settings or {})
+            settings["consecutive_errors"] = int(settings.get("consecutive_errors", 0)) + 1
+            config.settings = settings
+            await self.db.commit()
+        except Exception:
+            pass  # Don't let counter update block the caller
 
     def _filter_duplicates(self, items: List[ContentItem]) -> List[ContentItem]:
         """Filter duplicate items using Bloom filter.

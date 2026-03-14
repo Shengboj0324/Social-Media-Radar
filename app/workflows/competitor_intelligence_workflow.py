@@ -38,6 +38,9 @@ class CompetitorIntelligenceWorkflow:
             response_generator: Response generator for content creation
         """
         self.response_generator = response_generator
+        # In-memory occurrence counter for recurring-pattern detection.
+        # Key: (competitor_name_lower, complaint_type_lower) → count
+        self._pattern_counts: Dict[tuple, int] = {}
 
     async def analyze_competitor_complaint(
         self,
@@ -252,15 +255,46 @@ class CompetitorIntelligenceWorkflow:
             "positive_count": pos_count,
         }
 
+    def _resolve_channel(
+        self,
+        signal: ActionableSignal,
+        config: Dict[str, Any],
+    ) -> ResponseChannel:
+        """Resolve target ResponseChannel from step config or signal, defaulting to REDDIT."""
+        config_channel = config.get("channel")
+        if config_channel:
+            try:
+                return ResponseChannel(config_channel)
+            except ValueError:
+                pass
+        if signal.suggested_channel:
+            try:
+                return ResponseChannel(signal.suggested_channel.lower())
+            except ValueError:
+                pass
+        return ResponseChannel.REDDIT
+
     def _check_recurring_pattern(
         self,
         competitor_name: str,
         complaint_type: str,
     ) -> bool:
-        """Check if this is a recurring complaint pattern."""
-        # TODO: Implement actual pattern checking against historical data
-        # For now, return False (stub)
-        return False
+        """Check if this is a recurring complaint pattern.
+
+        Uses an in-memory counter keyed by (competitor_name, complaint_type).
+        A pattern is considered recurring once it has been seen ≥ 2 times
+        in this session, which is a conservative but meaningful threshold.
+        """
+        key = (competitor_name.lower(), complaint_type.lower())
+        self._pattern_counts[key] = self._pattern_counts.get(key, 0) + 1
+        is_recurring = self._pattern_counts[key] >= 2
+
+        if is_recurring:
+            logger.info(
+                f"Recurring pattern detected: competitor={competitor_name!r} "
+                f"complaint={complaint_type!r} count={self._pattern_counts[key]}"
+            )
+        return is_recurring
 
     def _extract_impact_indicators(self, signal: ActionableSignal) -> Dict[str, Any]:
         """Extract indicators of complaint impact."""
@@ -491,10 +525,11 @@ class CompetitorIntelligenceWorkflow:
 
         # Generate public response
         if "public_response" in content_types:
+            channel = self._resolve_channel(enhanced_signal, step.config)
             variants = await self.response_generator.generate_variants(
                 signal=enhanced_signal,
                 num_variants=3,
-                channel=ResponseChannel.REDDIT,  # TODO: Make configurable
+                channel=channel,
             )
 
             if variants:
