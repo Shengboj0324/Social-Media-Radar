@@ -31,8 +31,14 @@ from app.domain.normalized_models import (
 try:
     from app.intelligence.entity_extractor import EntityExtractor
 except ImportError:
-    EntityExtractor = None  # type: ignore
+    EntityExtractor = None  # type: ignore[assignment,misc]
     logger.warning("EntityExtractor not available - entity extraction will be disabled")
+
+try:
+    from app.llm.providers.openai_provider import OpenAIEmbeddingClient
+except ImportError:
+    OpenAIEmbeddingClient = None  # type: ignore[assignment,misc]
+    logger.warning("OpenAIEmbeddingClient not available - embedding generation will be disabled")
 
 from app.llm.router import get_router
 
@@ -50,7 +56,7 @@ class NormalizationEngine:
         enable_embedding_generation: bool = True,
     ):
         """Initialize normalization engine.
-        
+
         Args:
             enable_translation: Enable translation for non-English content
             enable_entity_extraction: Enable entity extraction
@@ -59,7 +65,7 @@ class NormalizationEngine:
         self.enable_translation = enable_translation
         self.enable_entity_extraction = enable_entity_extraction
         self.enable_embedding_generation = enable_embedding_generation
-        
+
         # Initialize entity extractor
         if enable_entity_extraction and EntityExtractor is not None:
             self.entity_extractor = EntityExtractor()
@@ -67,12 +73,20 @@ class NormalizationEngine:
             self.entity_extractor = None
             if enable_entity_extraction and EntityExtractor is None:
                 logger.warning("Entity extraction requested but EntityExtractor not available")
-        
-        # Initialize LLM router for embeddings
-        if enable_embedding_generation:
+
+        # Initialize LLM router for translation
+        if enable_translation:
             self.llm_router = get_router()
         else:
             self.llm_router = None
+
+        # Initialize dedicated embedding client (separate from LLM router)
+        if enable_embedding_generation and OpenAIEmbeddingClient is not None:
+            self._embedding_client = OpenAIEmbeddingClient()
+        else:
+            self._embedding_client = None
+            if enable_embedding_generation and OpenAIEmbeddingClient is None:
+                logger.warning("OpenAIEmbeddingClient not available - embeddings disabled")
         
         logger.info(
             f"NormalizationEngine initialized: "
@@ -144,7 +158,7 @@ class NormalizationEngine:
             entities=entities,
             topics=topics,
             keywords=keywords,
-            sentiment=sentiment,
+            sentiment=sentiment if sentiment is not None else SentimentPolarity.UNKNOWN,
             quality=quality,
             quality_score=quality_score,
             completeness_score=completeness_score,
@@ -215,14 +229,14 @@ class NormalizationEngine:
             return None
 
         try:
-            # Use LLM for translation
-            prompt = f"Translate the following {source_lang} text to English:\n\n{text}"
-            response = await self.llm_router.generate(
+            # Use LLM router's simple interface for translation
+            prompt = f"Translate the following {source_lang} text to English. Output only the translated text, nothing else:\n\n{text}"
+            translated = await self.llm_router.generate_simple(
                 prompt=prompt,
                 max_tokens=len(text) * 2,  # Rough estimate
                 temperature=0.3,
             )
-            return response.content
+            return translated.strip() if translated else None
         except Exception as e:
             logger.warning(f"Translation failed: {e}")
             return None
@@ -243,15 +257,15 @@ class NormalizationEngine:
             # Extract entities using entity extractor (async method)
             result = await self.entity_extractor.extract_entities(text)
 
-            # Convert to EntityMention objects
+            # Convert to EntityMention objects - map Entity fields to EntityMention fields
             entities = []
             for entity in result.entities:
                 entities.append(
                     EntityMention(
-                        text=entity.text,
-                        entity_type=entity.entity_type,
-                        start_char=entity.start_char,
-                        end_char=entity.end_char,
+                        entity_name=entity.text,
+                        entity_type=entity.type.value,
+                        span_start=entity.start_char,
+                        span_end=entity.end_char,
                         confidence=entity.confidence,
                     )
                 )
@@ -270,12 +284,11 @@ class NormalizationEngine:
         Returns:
             Embedding vector or None if generation fails
         """
-        if not text or not self.llm_router:
+        if not text or not self._embedding_client:
             return None
 
         try:
-            # Generate embedding using LLM router
-            response = await self.llm_router.embed(text)
+            response = await self._embedding_client.embed_text(text)
             return response.embedding
         except Exception as e:
             logger.warning(f"Embedding generation failed: {e}")
@@ -412,7 +425,7 @@ class NormalizationEngine:
         topics = []
         for entity in entities:
             if entity.entity_type in ["PRODUCT", "ORG", "EVENT"]:
-                topics.append(entity.text)
+                topics.append(entity.entity_name)
 
         # Extract keywords (simple word frequency)
         # In production, use TF-IDF or other keyword extraction

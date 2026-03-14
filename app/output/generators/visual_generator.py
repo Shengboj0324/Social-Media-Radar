@@ -3,8 +3,11 @@
 import asyncio
 import base64
 import io
+import logging
 import time
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 from PIL import Image, ImageDraw, ImageFont
 

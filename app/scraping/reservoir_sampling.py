@@ -62,12 +62,13 @@ class ReservoirSampler(Generic[T]):
         self.enable_weighted = enable_weighted
         self.time_decay_factor = time_decay_factor
 
-        # Initialize random generator
-        if random_seed is not None:
-            random.seed(random_seed)
+        # Use a per-instance Random so two samplers with the same seed produce
+        # identical sequences independently of each other (avoids shared global state).
+        self._rng = random.Random(random_seed)
 
         # Reservoir storage
         self.reservoir: List[T] = []
+        # In weighted mode, stores computed keys (random^(1/weight)), not raw weights
         self.weights: List[float] = []
 
         # Statistics
@@ -96,7 +97,9 @@ class ReservoirSampler(Generic[T]):
         if len(self.reservoir) < self.reservoir_size:
             self.reservoir.append(item)
             if self.enable_weighted:
-                self.weights.append(weight)
+                # Store computed key (same formula as replacement phase) for consistency
+                key = self._compute_key(weight)
+                self.weights.append(key)
             self.stats.samples_collected += 1
             self._update_acceptance_rate()
             return True
@@ -109,6 +112,25 @@ class ReservoirSampler(Generic[T]):
             # Standard Algorithm R
             return self._uniform_add(item)
 
+    def _compute_key(self, weight: float) -> float:
+        """Compute the weighted reservoir sampling key for a given weight.
+
+        Uses the formula key = random^(1/weight) from Efraimidis & Spirakis (2006).
+        A zero or negative weight is treated as negligible (key forced to 0.0).
+
+        Args:
+            weight: Item weight (must be ≥ 0)
+
+        Returns:
+            Sampling key in [0, 1]
+        """
+        if weight <= 0.0:
+            return 0.0
+        r = self._rng.random()
+        if r == 0.0:
+            return 0.0
+        return r ** (1.0 / weight)
+
     def _uniform_add(self, item: T) -> bool:
         """Add item using uniform random sampling (Algorithm R).
 
@@ -119,7 +141,7 @@ class ReservoirSampler(Generic[T]):
             True if item was added
         """
         # Generate random index in range [0, total_items_seen)
-        j = random.randint(0, self.stats.total_items_seen - 1)
+        j = self._rng.randint(0, self.stats.total_items_seen - 1)
 
         # Replace if index is within reservoir
         if j < self.reservoir_size:
@@ -130,7 +152,7 @@ class ReservoirSampler(Generic[T]):
         return False
 
     def _weighted_add(self, item: T, weight: float) -> bool:
-        """Add item using weighted reservoir sampling.
+        """Add item using weighted reservoir sampling (Efraimidis & Spirakis).
 
         Args:
             item: Item to add
@@ -139,8 +161,7 @@ class ReservoirSampler(Generic[T]):
         Returns:
             True if item was added
         """
-        # Calculate key for weighted sampling: random^(1/weight)
-        key = random.random() ** (1.0 / weight)
+        key = self._compute_key(weight)
 
         # Find minimum key in reservoir
         if not self.weights:
@@ -174,7 +195,7 @@ class ReservoirSampler(Generic[T]):
         """
         if not self.reservoir:
             return None
-        return random.choice(self.reservoir)
+        return self._rng.choice(self.reservoir)
 
     def clear(self) -> None:
         """Clear reservoir and reset statistics."""

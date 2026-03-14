@@ -5,8 +5,7 @@ import logging
 from typing import Dict, List, Optional, Type
 
 from app.core.models import Cluster, ContentItem
-from app.llm.client_base import BaseLLMClient
-from app.llm.openai_client import OpenAILLMClient
+from app.llm.router import LLMRouter, get_router
 from app.output.generators.base import BaseOutputGenerator
 from app.output.generators.text_generator import MarkdownGenerator
 from app.output.generators.visual_generator import InfographicGenerator, VideoGenerator
@@ -23,13 +22,13 @@ logger = logging.getLogger(__name__)
 class OutputManager:
     """Manage multi-format output generation."""
 
-    def __init__(self, llm_client: Optional[BaseLLMClient] = None):
+    def __init__(self, llm_router: Optional[LLMRouter] = None):
         """Initialize output manager.
 
         Args:
-            llm_client: LLM client for text generation
+            llm_router: LLM router for text generation (uses global router if not provided)
         """
-        self.llm_client = llm_client or OpenAILLMClient()
+        self.llm_router = llm_router or get_router()
         self._generators: Dict[OutputFormat, Type[BaseOutputGenerator]] = {
             OutputFormat.MARKDOWN: MarkdownGenerator,
             OutputFormat.IMAGE: InfographicGenerator,
@@ -75,9 +74,9 @@ class OutputManager:
         if not generator_class:
             raise ValueError(f"Unsupported output format: {format}")
 
-        # Create generator instance
+        # Create generator instance – text generators accept an llm_router kwarg
         if format in [OutputFormat.MARKDOWN, OutputFormat.HTML, OutputFormat.JSON]:
-            generator = generator_class(preferences, self.llm_client)
+            generator = generator_class(preferences, llm_router=self.llm_router)
         else:
             generator = generator_class(preferences)
 
@@ -85,16 +84,19 @@ class OutputManager:
         try:
             output = await generator.generate(request, clusters, items)
 
-            # Validate output
+            # Validate output quality; if invalid, try fallback formats but still
+            # return the output if no fallback is available (caller can inspect quality)
             is_valid = await generator.validate_output(output)
             if not is_valid:
                 logger.warning(f"Generated output failed validation for format {format}")
 
-                # Try fallback format
                 if preferences.fallback_formats:
                     return await self._generate_fallback(
                         request, preferences, clusters, items
                     )
+
+                # No fallback configured – return the output as-is with success=False
+                output.success = False
 
             return output
 
@@ -138,7 +140,7 @@ class OutputManager:
                     continue
 
                 if fallback_format in [OutputFormat.MARKDOWN, OutputFormat.HTML]:
-                    generator = generator_class(fallback_prefs, self.llm_client)
+                    generator = generator_class(fallback_prefs, llm_router=self.llm_router)
                 else:
                     generator = generator_class(fallback_prefs)
 
@@ -231,9 +233,10 @@ class OutputManager:
                 f"{min_quality_score}, retrying (attempt {attempt + 1}/{max_retries})"
             )
 
-            # Adjust temperature for retry
-            if hasattr(self.llm_client, "temperature"):
-                self.llm_client.temperature = min(0.9, self.llm_client.temperature + 0.1)
+            # Adjust temperature for retry (if router exposes a numeric temperature)
+            current_temp = getattr(self.llm_router, "temperature", None)
+            if isinstance(current_temp, (int, float)):
+                self.llm_router.temperature = min(0.9, current_temp + 0.1)
 
         # Return best attempt
         logger.warning(f"Failed to meet quality threshold after {max_retries} attempts")

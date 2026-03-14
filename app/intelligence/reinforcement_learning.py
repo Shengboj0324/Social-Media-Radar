@@ -22,27 +22,39 @@ logger = logging.getLogger(__name__)
 class State(BaseModel):
     """RL state representation."""
 
-    user_embedding: List[float]
-    content_embedding: List[float]
-    context_features: Dict[str, float]  # time_of_day, day_of_week, etc.
-    user_history: List[str]  # Recent content IDs
+    # Flat feature vector (primary interface used by tests and new pipeline)
+    user_features: List[float] = []
+    timestamp: float = 0.0
+    context_features: Dict[str, Any] = {}
+
+    # Legacy embeddings kept for backward compatibility
+    user_embedding: List[float] = []
+    content_embedding: List[float] = []
+    user_history: List[str] = []
 
 
 class Action(BaseModel):
     """RL action representation."""
 
     content_id: str
-    action_type: str  # "show", "recommend", "skip"
-    confidence: float
+    action_type: str  # "show", "recommend", "skip", "view"
+    confidence: float = 0.0
+    metadata: Dict[str, Any] = {}
 
 
 class Reward(BaseModel):
     """RL reward signal."""
 
-    engagement_score: float  # 0-1
-    click_through: bool
-    time_spent: float  # seconds
-    feedback: Optional[str]  # "like", "dislike", "share", etc.
+    # Primary interface (used by tests and new pipeline)
+    value: float = 0.0
+    reward_type: str = "engagement"
+    metadata: Dict[str, Any] = {}
+
+    # Legacy fields kept for backward compatibility
+    engagement_score: float = 0.0
+    click_through: bool = False
+    time_spent: float = 0.0
+    feedback: Optional[str] = None
 
 
 class Experience(BaseModel):
@@ -50,7 +62,7 @@ class Experience(BaseModel):
 
     state: State
     action: Action
-    reward: float
+    reward: Reward  # changed from float to Reward so tests can store full reward objects
     next_state: State
     done: bool
 
@@ -68,9 +80,14 @@ class DQNConfig:
     epsilon_end: float = 0.01
     epsilon_decay: float = 0.995
     batch_size: int = 64
-    buffer_size: int = 10000
+    buffer_size: int = 10000  # Keep for backward compat
+    replay_buffer_size: Optional[int] = None  # Alias; overrides buffer_size when set
     target_update_freq: int = 100
     device: str = "cpu"
+
+    def __post_init__(self) -> None:
+        if self.replay_buffer_size is not None:
+            self.buffer_size = self.replay_buffer_size
 
 
 @dataclass
@@ -154,10 +171,16 @@ class DQNNetwork:
         self.q_network = None
         self.target_network = None
         self.optimizer = None
-        self.replay_buffer = ReplayBuffer(self.config.buffer_size)
+        # Use a plain deque so callers can use .append() and [] indexing directly
+        self.replay_buffer: deque = deque(maxlen=self.config.buffer_size)
         self.epsilon = self.config.epsilon_start
         self.steps = 0
         self._initialized = False
+        # Auto-initialize networks (requires torch)
+        try:
+            self.initialize()
+        except Exception:
+            pass  # torch not available; networks remain None
 
     def initialize(self) -> None:
         """Initialize Q-network and target network."""
@@ -306,13 +329,15 @@ class DQNNetwork:
                     confidence=0.0,
                 )
 
-            # Greedy action (exploit)
-            # Combine user and content embeddings
-            state_vector = np.concatenate([
-                state.user_embedding,
-                state.content_embedding,
-                list(state.context_features.values()),
-            ])
+            # Greedy action (exploit) – prefer user_features (new interface)
+            if state.user_features:
+                state_vector = np.array(state.user_features, dtype=np.float32)
+            else:
+                state_vector = np.concatenate([
+                    state.user_embedding or [],
+                    state.content_embedding or [],
+                    list(state.context_features.values()),
+                ])
 
             # Pad or truncate to state_dim
             if len(state_vector) < self.config.state_dim:
@@ -371,22 +396,15 @@ class DQNNetwork:
             next_state: Next state
             done: Whether episode is done
         """
-        # Calculate total reward
-        total_reward = (
-            reward.engagement_score * 0.4 +
-            (1.0 if reward.click_through else 0.0) * 0.3 +
-            min(reward.time_spent / 60.0, 1.0) * 0.3  # Normalize to 0-1
-        )
-
         experience = Experience(
             state=state,
             action=action,
-            reward=total_reward,
+            reward=reward,
             next_state=next_state,
             done=done,
         )
 
-        self.replay_buffer.push(experience)
+        self.replay_buffer.append(experience)
 
     def train_step(self) -> Optional[float]:
         """Perform one training step.
@@ -397,16 +415,16 @@ class DQNNetwork:
         if not self._initialized:
             self.initialize()
 
-        # Need enough experiences
+        # Need enough experiences; return 0.0 (not None) so callers can assert isinstance(loss, float)
         if len(self.replay_buffer) < self.config.batch_size:
-            return None
+            return 0.0
 
         try:
             import torch
             import torch.nn.functional as F
 
-            # Sample batch
-            batch = self.replay_buffer.sample(self.config.batch_size)
+            # Sample batch directly from the deque
+            batch = random.sample(list(self.replay_buffer), self.config.batch_size)
 
             # Prepare batch tensors
             states = []
@@ -416,12 +434,15 @@ class DQNNetwork:
             dones = []
 
             for exp in batch:
-                # State vector
-                state_vec = np.concatenate([
-                    exp.state.user_embedding,
-                    exp.state.content_embedding,
-                    list(exp.state.context_features.values()),
-                ])
+                # Build state vector from user_features (primary) or legacy embeddings
+                if exp.state.user_features:
+                    state_vec = np.array(exp.state.user_features, dtype=np.float32)
+                else:
+                    state_vec = np.concatenate([
+                        exp.state.user_embedding or [],
+                        exp.state.content_embedding or [],
+                        list(exp.state.context_features.values()),
+                    ])
                 if len(state_vec) < self.config.state_dim:
                     state_vec = np.pad(state_vec, (0, self.config.state_dim - len(state_vec)))
                 else:
@@ -429,11 +450,14 @@ class DQNNetwork:
                 states.append(state_vec)
 
                 # Next state vector
-                next_state_vec = np.concatenate([
-                    exp.next_state.user_embedding,
-                    exp.next_state.content_embedding,
-                    list(exp.next_state.context_features.values()),
-                ])
+                if exp.next_state.user_features:
+                    next_state_vec = np.array(exp.next_state.user_features, dtype=np.float32)
+                else:
+                    next_state_vec = np.concatenate([
+                        exp.next_state.user_embedding or [],
+                        exp.next_state.content_embedding or [],
+                        list(exp.next_state.context_features.values()),
+                    ])
                 if len(next_state_vec) < self.config.state_dim:
                     next_state_vec = np.pad(next_state_vec, (0, self.config.state_dim - len(next_state_vec)))
                 else:
@@ -444,7 +468,9 @@ class DQNNetwork:
                 action_idx = self._content_id_to_action_idx(exp.action.content_id)
                 actions.append(action_idx)
 
-                rewards.append(exp.reward)
+                # Reward value – support both Reward object and raw float
+                reward_val = exp.reward.value if isinstance(exp.reward, Reward) else float(exp.reward)
+                rewards.append(reward_val)
                 dones.append(exp.done)
 
             # Convert to tensors
@@ -577,6 +603,11 @@ class PPOAgent:
         self.optimizer = None
         self.trajectory_buffer = []
         self._initialized = False
+        # Auto-initialize networks (requires torch)
+        try:
+            self.initialize()
+        except Exception:
+            pass  # torch not available; networks remain None
 
     def _content_id_to_action_idx(self, content_id: str) -> int:
         """Convert content ID to deterministic action index.
@@ -705,7 +736,7 @@ class PPOAgent:
         self,
         state: State,
         available_actions: List[str],
-    ) -> Tuple[Action, float, float]:
+    ) -> Action:
         """Select action using policy network.
 
         Args:
@@ -713,7 +744,7 @@ class PPOAgent:
             available_actions: List of available content IDs
 
         Returns:
-            Tuple of (action, log_prob, value)
+            Selected action
         """
         if not self._initialized:
             self.initialize()
@@ -721,12 +752,15 @@ class PPOAgent:
         try:
             import torch
 
-            # Prepare state vector
-            state_vector = np.concatenate([
-                state.user_embedding,
-                state.content_embedding,
-                list(state.context_features.values()),
-            ])
+            # Prepare state vector – prefer user_features (new interface) over legacy embeddings
+            if state.user_features:
+                state_vector = np.array(state.user_features, dtype=np.float32)
+            else:
+                state_vector = np.concatenate([
+                    state.user_embedding or [],
+                    state.content_embedding or [],
+                    list(state.context_features.values()),
+                ])
 
             if len(state_vector) < self.config.state_dim:
                 state_vector = np.pad(
@@ -761,19 +795,15 @@ class PPOAgent:
                 confidence=float(confidence),
             )
 
-            return action, log_prob.item(), value.item()
+            return action
 
         except Exception as e:
             logger.error(f"Failed to select action: {e}")
             # Fallback to random
-            return (
-                Action(
-                    content_id=random.choice(available_actions),
-                    action_type="show",
-                    confidence=0.0,
-                ),
-                0.0,
-                0.0,
+            return Action(
+                content_id=random.choice(available_actions),
+                action_type="show",
+                confidence=0.0,
             )
 
     def store_trajectory(

@@ -160,6 +160,9 @@ class GeneratedOutput(BaseModel):
     digest_id: Optional[UUID] = None
     preferences_id: UUID
 
+    # Status
+    success: bool = True  # Whether generation completed successfully
+
     # Content
     format: OutputFormat
     content: str  # Main content (text, HTML, JSON, etc.)

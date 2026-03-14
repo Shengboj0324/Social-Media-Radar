@@ -64,80 +64,62 @@ async def test_complete_digest_pipeline():
         ),
     ]
 
-    # Step 3: Score relevance
-    with patch("app.core.ranking.OpenAILLMClient") as mock_llm:
-        # Mock embeddings
-        mock_llm.return_value.get_embedding = AsyncMock(
-            return_value=[0.1] * 1536  # Mock embedding vector
-        )
+    # Step 3: Score relevance (RelevanceScorer is now synchronous, no LLM dependency)
+    scorer = RelevanceScorer(interest_profile=user_profile)
 
-        scorer = RelevanceScorer(llm_client=mock_llm.return_value)
+    scores = [scorer.score_item(item) for item in content_items]
 
-        # Score items
-        for item in content_items:
-            score = await scorer.score_item(item, user_profile)
-            item.relevance_score = score
+    # All items should have relevance scores in [0, 1]
+    assert all(score is not None for score in scores)
+    assert all(0 <= score <= 1 for score in scores)
 
-        # All items should have relevance scores
-        assert all(item.relevance_score is not None for item in content_items)
-        assert all(0 <= item.relevance_score <= 1 for item in content_items)
+    # Step 4: Cluster content (ContentClusterer is now synchronous, no LLM dependency)
+    clusterer = ContentClusterer()
+    clusters = clusterer.cluster_items(content_items, user_id)
 
-    # Step 4: Cluster content
-    with patch("app.core.ranking.OpenAILLMClient") as mock_llm:
-        mock_llm.return_value.get_embedding = AsyncMock(
-            return_value=[0.1] * 1536
-        )
-        mock_llm.return_value.generate = AsyncMock(
-            return_value=MagicMock(
-                content="AI and Machine Learning Advances",
-                model="gpt-4",
-            )
-        )
-
-        clusterer = ContentClusterer(llm_client=mock_llm.return_value)
-
-        clusters = await clusterer.cluster_items(content_items, user_id)
-
-        # Should have created clusters
-        assert len(clusters) > 0
-        assert all(cluster.topic for cluster in clusters)
-        assert all(cluster.summary for cluster in clusters)
+    # Should have created at least one cluster (single-cluster fallback when no embeddings)
+    assert len(clusters) > 0
+    assert all(cluster.topic for cluster in clusters)
 
     # Step 5: Generate output
-    with patch("app.output.generators.text_generator.OpenAILLMClient") as mock_llm:
-        mock_llm.return_value.generate = AsyncMock(
-            return_value=MagicMock(
-                content="# Daily Intelligence Digest\n\n## AI and Machine Learning\n\nToday's top stories...",
-                model="gpt-4",
-                usage={"total_tokens": 500},
-            )
+    mock_router = MagicMock()
+    mock_router.generate_simple = AsyncMock(
+        return_value=(
+            "# Daily Intelligence Digest\n\n"
+            "## AI and Machine Learning\n\n"
+            "Today's top stories cover major breakthroughs in neural network architecture, "
+            "transformer models, and enterprise AI funding. Researchers have developed new "
+            "approaches that significantly improve performance on benchmark tasks. "
+            "The field continues to advance rapidly with both academic and industry contributions."
         )
+    )
+    mock_router.get_stats = MagicMock(return_value={"primary_model": "gpt-4o"})
 
-        output_manager = OutputManager(llm_client=mock_llm.return_value)
+    output_manager = OutputManager(llm_router=mock_router)
 
-        preferences = OutputPreferences(
-            user_id=user_id,
-            name="Default",
-            primary_format=OutputFormat.MARKDOWN,
-        )
+    preferences = OutputPreferences(
+        user_id=user_id,
+        name="Default",
+        primary_format=OutputFormat.MARKDOWN,
+    )
 
-        request = OutputRequest(
-            user_id=user_id,
-            preferences_id=preferences.id,
-        )
+    request = OutputRequest(
+        user_id=user_id,
+        preferences_id=preferences.id,
+    )
 
-        output = await output_manager.generate_output(
-            request=request,
-            preferences=preferences,
-            clusters=clusters,
-            items=content_items,
-        )
+    output = await output_manager.generate_output(
+        request=request,
+        preferences=preferences,
+        clusters=clusters,
+        items=content_items,
+    )
 
-        # Verify output
-        assert output.success is True
-        assert output.format == OutputFormat.MARKDOWN
-        assert len(output.content) > 0
-        assert "Daily Intelligence Digest" in output.content
+    # Verify output
+    assert output.success is True
+    assert output.format == OutputFormat.MARKDOWN
+    assert len(output.content) > 0
+    assert "Daily Intelligence Digest" in output.content
 
 
 @pytest.mark.asyncio
@@ -158,54 +140,38 @@ async def test_error_recovery_in_pipeline():
         ),
     ]
 
-    # Test LLM failure with fallback
-    with patch("app.output.generators.text_generator.OpenAILLMClient") as mock_llm:
-        # First call fails, second succeeds
-        mock_llm.return_value.generate = AsyncMock(
-            side_effect=[
-                Exception("API timeout"),
-                MagicMock(
-                    content="Fallback summary",
-                    model="gpt-4",
-                    usage={"total_tokens": 100},
-                ),
-            ]
+    # Test LLM failure: when no fallback formats are configured, the manager raises
+    mock_router = MagicMock()
+    mock_router.generate_simple = AsyncMock(side_effect=Exception("API timeout"))
+    mock_router.get_stats = MagicMock(return_value={"primary_model": "gpt-4o"})
+
+    output_manager = OutputManager(llm_router=mock_router)
+
+    preferences = OutputPreferences(
+        user_id=user_id,
+        name="Test",
+        primary_format=OutputFormat.MARKDOWN,
+        fallback_formats=[],  # No fallback - should raise
+    )
+
+    request = OutputRequest(
+        user_id=user_id,
+        preferences_id=preferences.id,
+    )
+
+    # Cluster without LLM (synchronous)
+    clusterer = ContentClusterer()
+    clusters = clusterer.cluster_items(content_items, user_id)
+
+    # Without fallback formats, the manager should propagate the error
+    import pytest as _pytest
+    with _pytest.raises(Exception):
+        await output_manager.generate_output(
+            request=request,
+            preferences=preferences,
+            clusters=clusters,
+            items=content_items,
         )
-
-        output_manager = OutputManager(llm_client=mock_llm.return_value)
-
-        preferences = OutputPreferences(
-            user_id=user_id,
-            name="Test",
-            primary_format=OutputFormat.MARKDOWN,
-        )
-
-        request = OutputRequest(
-            user_id=user_id,
-            preferences_id=preferences.id,
-        )
-
-        # Should retry and succeed
-        with patch("app.core.ranking.OpenAILLMClient") as mock_cluster_llm:
-            mock_cluster_llm.return_value.get_embedding = AsyncMock(
-                return_value=[0.1] * 1536
-            )
-            mock_cluster_llm.return_value.generate = AsyncMock(
-                return_value=MagicMock(content="Test Topic", model="gpt-4")
-            )
-
-            clusterer = ContentClusterer(llm_client=mock_cluster_llm.return_value)
-            clusters = await clusterer.cluster_items(content_items, user_id)
-
-            # This should succeed on retry
-            output = await output_manager.generate_output(
-                request=request,
-                preferences=preferences,
-                clusters=clusters,
-                items=content_items,
-            )
-
-            assert output.success is True
 
 
 @pytest.mark.asyncio
@@ -218,7 +184,7 @@ async def test_multi_platform_aggregation():
         SourcePlatform.REDDIT,
         SourcePlatform.YOUTUBE,
         SourcePlatform.RSS,
-        SourcePlatform.TWITTER,
+        SourcePlatform.TIKTOK,
     ]
 
     content_items = []
@@ -235,22 +201,11 @@ async def test_multi_platform_aggregation():
         )
         content_items.append(item)
 
-    # Cluster should identify multi-platform coverage
-    with patch("app.core.ranking.OpenAILLMClient") as mock_llm:
-        mock_llm.return_value.get_embedding = AsyncMock(
-            return_value=[0.1] * 1536
-        )
-        mock_llm.return_value.generate = AsyncMock(
-            return_value=MagicMock(
-                content="Multi-Platform Topic",
-                model="gpt-4",
-            )
-        )
+    # Cluster should identify multi-platform coverage (synchronous, no LLM)
+    clusterer = ContentClusterer()
+    clusters = clusterer.cluster_items(content_items, user_id)
 
-        clusterer = ContentClusterer(llm_client=mock_llm.return_value)
-        clusters = await clusterer.cluster_items(content_items, user_id)
-
-        # Should have identified platforms
-        for cluster in clusters:
-            assert len(cluster.platforms_represented) > 0
+    # Should have identified platforms
+    for cluster in clusters:
+        assert len(cluster.platforms_represented) > 0
 

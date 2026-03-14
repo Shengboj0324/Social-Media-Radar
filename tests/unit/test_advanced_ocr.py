@@ -127,7 +127,7 @@ class TestOCRResult:
         confidences = [0.9, 0.8, 0.95, 0.85]
         avg = sum(confidences) / len(confidences)
 
-        assert avg == 0.875
+        assert avg == pytest.approx(0.875)
 
 
 class TestTrOCRModel:

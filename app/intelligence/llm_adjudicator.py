@@ -149,8 +149,8 @@ churn_risk, security_concern, legal_risk, reputation_risk,
 expansion_opportunity, upsell_opportunity, partnership_opportunity,
 unclear, not_actionable
 
-Abstention reasons: low_confidence, ambiguous_intent, insufficient_context,
-conflicting_signals, unsafe_content, policy_violation, out_of_scope
+Abstention reasons: low_confidence, ambiguous_multi_label, insufficient_context,
+out_of_distribution, unsafe_to_classify, language_barrier, spam_or_noise
 
 If you are uncertain, set abstain=true and provide a reason."""
         
@@ -247,15 +247,13 @@ Output: {
         """
         for attempt in range(self.max_retries):
             try:
-                # Call LLM
-                response = await self.llm_router.generate(
+                # Call LLM via generate_simple (returns str directly)
+                content = await self.llm_router.generate_simple(
                     prompt=prompt,
                     max_tokens=1000,
                     temperature=self.temperature,
                 )
-
-                # Extract JSON from response
-                content = response.content.strip()
+                content = content.strip()
 
                 # Try to find JSON in response
                 if "{" in content and "}" in content:
@@ -321,12 +319,13 @@ Output: {
         # Parse evidence spans
         evidence_spans = []
         for span_dict in adjudication.evidence_spans:
+            span_text = span_dict.get("text", "")
             evidence_spans.append(
                 EvidenceSpan(
-                    text=span_dict.get("text", ""),
-                    start_char=0,  # LLM doesn't provide exact positions
-                    end_char=len(span_dict.get("text", "")),
-                    reasoning=span_dict.get("reason", ""),
+                    text=span_text,
+                    start_char=0,  # LLM doesn't provide exact character positions
+                    end_char=len(span_text),
+                    relevance_score=0.8,  # Default relevance; LLM-selected spans are considered high-relevance
                 )
             )
 
@@ -349,7 +348,7 @@ Output: {
             evidence_spans=evidence_spans,
             rationale=adjudication.rationale,
             model_name=self.model_name,
-            model_version="2024-01",  # Would be dynamic in production
+            model_version=datetime.now(timezone.utc).strftime("%Y-%m"),
             inference_method="llm_few_shot",
         )
 
@@ -380,7 +379,7 @@ Output: {
             abstention_reason=reason,
             rationale=rationale,
             model_name=self.model_name,
-            model_version="2024-01",
+            model_version=datetime.now(timezone.utc).strftime("%Y-%m"),
             inference_method="llm_few_shot",
         )
 

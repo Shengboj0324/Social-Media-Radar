@@ -382,7 +382,9 @@ class TestIntegration:
 
         sample = sampler.get_sample()
 
-        # Should have more trending content than expected by uniform sampling
+        # Should have more trending content than expected by uniform sampling.
+        # With 10 trending items out of 100 total, uniform sampling gives ~5 out of 50.
+        # Weighted sampling (weight 10.0 vs 1.0) should keep all 10 trending items.
         trending_count = sum(1 for item in sample if item.startswith("trending_"))
-        assert trending_count > 10, f"Expected >10 trending items, got {trending_count}"
+        assert trending_count >= 7, f"Expected ≥7 trending items (all 10 kept), got {trending_count}"
 

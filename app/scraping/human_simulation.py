@@ -46,6 +46,10 @@ class BezierCurve:
         Returns:
             List of points along the curve
         """
+        # Edge case: 0 intermediate points → return just the start point
+        if num_points == 0:
+            return [start]
+
         points = []
 
         for i in range(num_points + 1):

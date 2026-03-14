@@ -94,6 +94,7 @@ async def vllm_client(
 
 @pytest_asyncio.fixture
 async def router(
+    openai_api_key: str,  # Ensures OPENAI_API_KEY is set; skips if not
     service_config: LLMServiceConfig,
 ) -> AsyncGenerator[LLMRouter, None]:
     """Create router for testing."""
@@ -103,6 +104,7 @@ async def router(
 
 @pytest_asyncio.fixture
 async def ab_test_router(
+    openai_api_key: str,  # Ensures OPENAI_API_KEY is set; skips if not
     service_config: LLMServiceConfig,
 ) -> AsyncGenerator[LLMRouter, None]:
     """Create router with A/B testing for testing."""

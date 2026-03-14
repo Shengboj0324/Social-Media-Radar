@@ -22,6 +22,8 @@ from app.llm.exceptions import LLMCircuitBreakerError, LLMError
 from app.llm.models import LLMMessage, LLMProvider, LLMResponse
 from app.llm.monitoring import record_router_decision, record_router_fallback
 
+logger = logging.getLogger(__name__)
+
 # Import providers conditionally
 try:
     from app.llm.providers import AnthropicLLMClient, OpenAILLMClient, VLLMClient
@@ -30,11 +32,9 @@ except ImportError as e:
     logger.warning(f"Some LLM providers not available: {e}")
     PROVIDERS_AVAILABLE = False
     # Create placeholder classes
-    AnthropicLLMClient = None
-    OpenAILLMClient = None
-    VLLMClient = None
-
-logger = logging.getLogger(__name__)
+    AnthropicLLMClient = None  # type: ignore[assignment,misc]
+    OpenAILLMClient = None  # type: ignore[assignment,misc]
+    VLLMClient = None  # type: ignore[assignment,misc]
 
 
 class RoutingStrategy(str, Enum):

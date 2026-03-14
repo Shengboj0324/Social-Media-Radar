@@ -16,6 +16,13 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+# Optional heavy dependencies – imported at module level so tests can patch them
+try:
+    from transformers import ViTForImageClassification, ViTImageProcessor
+except ImportError:
+    ViTForImageClassification = None  # type: ignore[assignment,misc]
+    ViTImageProcessor = None  # type: ignore[assignment,misc]
+
 
 class ImageFeatures(BaseModel):
     """Extracted image features from ViT."""
@@ -86,11 +93,12 @@ class VisionTransformer:
             return
 
         try:
-            from transformers import ViTForImageClassification, ViTImageProcessor
+            if ViTForImageClassification is None or ViTImageProcessor is None:
+                raise ImportError("transformers package not available")
 
             logger.info(f"Loading ViT model: {self.config.model_name}")
 
-            # Load processor and model
+            # Load processor and model using module-level names (patchable in tests)
             self.processor = ViTImageProcessor.from_pretrained(self.config.model_name)
             self.model = ViTForImageClassification.from_pretrained(
                 self.config.model_name,

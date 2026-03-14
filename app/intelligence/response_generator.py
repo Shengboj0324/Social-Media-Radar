@@ -19,7 +19,7 @@ from app.intelligence.response_playbook import (
     ResponseChannel,
     ResponsePlaybook,
 )
-from app.llm.router import LLMRouter
+from app.llm.router import LLMRouter, get_router
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ class ResponseGenerator:
             playbook: Response playbook (optional, will create if not provided)
             enable_quality_scoring: Whether to enable quality scoring
         """
-        self.router = router or LLMRouter()
+        self.router = router or get_router()
         self.playbook = playbook or ResponsePlaybook()
         self.enable_quality_scoring = enable_quality_scoring
 
@@ -340,7 +340,7 @@ class ResponseGenerator:
         channel: ResponseChannel,
         variant_number: int,  # pylint: disable=unused-argument
     ) -> ResponseVariant:
-        """Generate a single response variant.
+        """Generate a single response variant using the LLM router.
 
         Args:
             signal: Signal to respond to
@@ -350,20 +350,33 @@ class ResponseGenerator:
 
         Returns:
             Response variant with quality scores
-
-        Note:
-            This is a stub implementation. Full LLM integration will be added in Phase 2.5.
         """
-        # Build prompts using playbook (for future LLM integration)
-        _ = self.playbook.build_prompt(
+        # Build structured prompts from the playbook
+        system_prompt, user_prompt = self.playbook.build_prompt(
             signal=signal,
             tone=tone,
             channel=channel,
         )
 
-        # Stub: In production, this would call the LLM router
-        # For now, return a placeholder variant for testing
-        content = f"[Generated response for {signal.signal_type.value} in {tone.value} tone]"
+        # Generate content via LLM router
+        try:
+            content = await self.router.generate_simple(
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+                temperature=0.7,
+                max_tokens=600,
+            )
+            content = content.strip()
+        except Exception as exc:
+            logger.warning(
+                "LLM generation failed for variant %s (tone=%s, channel=%s): %s",
+                variant_number,
+                tone.value,
+                channel.value,
+                exc,
+            )
+            # Fall back to a descriptive placeholder so the pipeline doesn't crash
+            content = f"Unable to generate response for {signal.signal_type.value}."
 
         # Score the generated content
         clarity_score = self._score_clarity(content)

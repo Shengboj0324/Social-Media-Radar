@@ -256,9 +256,9 @@ class SignalClassifier:
                 strategy=RoutingStrategy.COST_OPTIMIZED,
             )
 
-            # Parse response
+            # Parse response - generate_simple returns a str directly
             signal_type, confidence = self._parse_classification_response(
-                response.content,
+                response,
                 pattern_matches,
             )
 

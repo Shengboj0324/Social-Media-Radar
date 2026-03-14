@@ -1,12 +1,12 @@
 """Text-based output generators (Markdown, HTML, PDF)."""
 
 import asyncio
+import logging
 import time
-from typing import List
+from typing import List, Optional
 
 from app.core.models import Cluster, ContentItem
-from app.llm.client_base import BaseLLMClient
-from app.llm.openai_client import OpenAILLMClient
+from app.llm.router import LLMRouter, get_router
 from app.output.generators.base import BaseOutputGenerator
 from app.output.models import (
     GeneratedOutput,
@@ -17,19 +17,25 @@ from app.output.models import (
     TextStyle,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class MarkdownGenerator(BaseOutputGenerator):
     """Generate Markdown formatted output."""
 
-    def __init__(self, preferences: OutputPreferences, llm_client: BaseLLMClient):
+    def __init__(
+        self,
+        preferences: OutputPreferences,
+        llm_router: Optional[LLMRouter] = None,
+    ):
         """Initialize Markdown generator.
 
         Args:
             preferences: Output preferences
-            llm_client: LLM client for content generation
+            llm_router: LLM router for content generation (uses global router if not provided)
         """
         super().__init__(preferences)
-        self.llm_client = llm_client
+        self.llm_router = llm_router or get_router()
 
     async def generate(
         self,
@@ -44,14 +50,12 @@ class MarkdownGenerator(BaseOutputGenerator):
         # Build prompt based on preferences
         prompt = self._build_prompt(clusters, items, request)
 
-        # Generate content using LLM
-        response = await self.llm_client.generate(
-            messages=[{"role": "user", "content": prompt}],
+        # Generate content using LLM router's simple interface
+        content = await self.llm_router.generate_simple(
+            prompt=prompt,
             temperature=0.7,
             max_tokens=4000,
         )
-
-        content = response.content
 
         # Apply style and tone
         content = self._apply_text_style(content)
@@ -66,13 +70,13 @@ class MarkdownGenerator(BaseOutputGenerator):
         char_count = len(content)
         generation_time_ms = int((time.time() - start_time) * 1000)
 
+        router_stats = self.llm_router.get_stats()
         metadata = OutputMetadata(
             format=OutputFormat.MARKDOWN,
             generation_time_ms=generation_time_ms,
             word_count=word_count,
             character_count=char_count,
-            model_used=response.model,
-            tokens_used=response.usage.get("total_tokens") if response.usage else None,
+            model_used=router_stats.get("primary_model"),
         )
 
         output = GeneratedOutput(

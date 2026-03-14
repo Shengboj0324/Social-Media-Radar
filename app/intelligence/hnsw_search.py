@@ -15,6 +15,12 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+# Optional dependency – imported at module level so tests can patch it
+try:
+    import hnswlib
+except ImportError:
+    hnswlib = None  # type: ignore[assignment]
+
 
 class SearchResult(BaseModel):
     """Search result with ID and distance."""
@@ -81,11 +87,12 @@ class HNSWIndex:
             return
 
         try:
-            import hnswlib
+            if hnswlib is None:
+                raise ImportError("hnswlib package not available")
 
             logger.info(f"Initializing HNSW index with dimension={self.config.dimension}")
 
-            # Create index
+            # Create index using module-level name (patchable in tests)
             self.index = hnswlib.Index(
                 space=self.config.space,
                 dim=self.config.dimension,

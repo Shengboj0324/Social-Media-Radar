@@ -19,6 +19,18 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+# Optional heavy dependencies – imported at module level so tests can patch them
+try:
+    from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+except ImportError:
+    TrOCRProcessor = None  # type: ignore[assignment,misc]
+    VisionEncoderDecoderModel = None  # type: ignore[assignment,misc]
+
+try:
+    import easyocr
+except ImportError:
+    easyocr = None  # type: ignore[assignment]
+
 
 class TextRegion(BaseModel):
     """Detected text region with bounding box."""
@@ -91,11 +103,12 @@ class TrOCRModel:
             return
 
         try:
-            from transformers import TrOCRProcessor, VisionEncoderDecoderModel
+            if TrOCRProcessor is None or VisionEncoderDecoderModel is None:
+                raise ImportError("transformers package not available")
 
             logger.info(f"Loading TrOCR model: {self.config.model_name}")
 
-            # Load processor and model
+            # Load processor and model using module-level names (patchable in tests)
             self.processor = TrOCRProcessor.from_pretrained(self.config.model_name)
             self.model = VisionEncoderDecoderModel.from_pretrained(self.config.model_name)
 
@@ -244,11 +257,12 @@ class EasyOCREngine:
             return
 
         try:
-            import easyocr
+            if easyocr is None:
+                raise ImportError("easyocr package not available")
 
             logger.info(f"Loading EasyOCR with languages: {self.config.languages}")
 
-            # Create reader
+            # Create reader using module-level name (patchable in tests)
             self.reader = easyocr.Reader(
                 self.config.languages,
                 gpu=self.config.gpu,

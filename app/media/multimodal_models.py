@@ -17,6 +17,22 @@ from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
+# Optional heavy dependencies – imported at module level so tests can patch them
+try:
+    from transformers import CLIPModel as HFCLIPModel, CLIPProcessor
+except ImportError:
+    HFCLIPModel = None  # type: ignore[assignment,misc]
+    CLIPProcessor = None  # type: ignore[assignment,misc]
+
+try:
+    from transformers import (
+        LlavaForConditionalGeneration,
+        AutoProcessor,  # kept as AutoProcessor so tests can patch it at this name
+    )
+except ImportError:
+    LlavaForConditionalGeneration = None  # type: ignore[assignment,misc]
+    AutoProcessor = None  # type: ignore[assignment,misc]
+
 
 class ImageTextAlignment(BaseModel):
     """Image-text alignment result from CLIP."""
@@ -87,11 +103,12 @@ class CLIPModel:
             return
 
         try:
-            from transformers import CLIPModel as HFCLIPModel, CLIPProcessor
+            if HFCLIPModel is None or CLIPProcessor is None:
+                raise ImportError("transformers package not available")
 
             logger.info(f"Loading CLIP model: {self.config.model_name}")
 
-            # Load processor and model
+            # Load processor and model using module-level names (patchable in tests)
             self.processor = CLIPProcessor.from_pretrained(self.config.model_name)
             self.model = HFCLIPModel.from_pretrained(self.config.model_name)
 
@@ -284,11 +301,12 @@ class LLaVAModel:
             return
 
         try:
-            from transformers import LlavaForConditionalGeneration, AutoProcessor
+            if LlavaForConditionalGeneration is None or AutoProcessor is None:
+                raise ImportError("transformers package not available")
 
             logger.info(f"Loading LLaVA model: {self.config.model_name}")
 
-            # Load processor and model
+            # Load processor and model using module-level names (patchable in tests)
             self.processor = AutoProcessor.from_pretrained(self.config.model_name)
             self.model = LlavaForConditionalGeneration.from_pretrained(
                 self.config.model_name,

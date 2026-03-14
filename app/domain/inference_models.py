@@ -50,7 +50,7 @@ class SignalType(str, Enum):
 
 class AbstentionReason(str, Enum):
     """Reasons for abstaining from making a prediction."""
-    
+
     LOW_CONFIDENCE = "low_confidence"  # Model confidence below threshold
     AMBIGUOUS_MULTI_LABEL = "ambiguous_multi_label"  # Multiple labels equally likely
     INSUFFICIENT_CONTEXT = "insufficient_context"  # Need thread/conversation context
@@ -58,6 +58,7 @@ class AbstentionReason(str, Enum):
     UNSAFE_TO_CLASSIFY = "unsafe_to_classify"  # High-risk content (legal, political)
     LANGUAGE_BARRIER = "language_barrier"  # Translation quality too low
     SPAM_OR_NOISE = "spam_or_noise"  # Content quality too low
+    MALFORMED_OUTPUT = "malformed_output"  # LLM output could not be parsed/validated
 
 
 class EvidenceSpan(BaseModel):
