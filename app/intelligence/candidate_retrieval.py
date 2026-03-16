@@ -152,7 +152,15 @@ class CandidateRetriever:
         candidates: Dict[SignalType, float] = {}
         reasoning: Dict[SignalType, List[str]] = {}
         
-        # 1. Embedding similarity
+        # 1. Embedding similarity — HNSW required; warn loudly on fallback
+        if observation.embedding and not self.hnsw_index:
+            logger.warning(
+                "HNSW index is not initialised (no exemplars loaded). "
+                "Candidate retrieval is falling back to entity matching and platform priors only. "
+                "Populate the exemplar bank via CandidateRetriever(exemplar_bank=[...]) or "
+                "add_exemplar() to restore HNSW-based retrieval."
+            )
+
         if observation.embedding and self.hnsw_index:
             embedding_candidates = self._retrieve_by_embedding(observation)
             for signal_type, score, reason in embedding_candidates:

@@ -10,6 +10,7 @@ This module orchestrates the complete inference pipeline:
 This is the main entry point for the Phase 2 inference system.
 """
 
+import asyncio
 import logging
 from typing import Optional
 from uuid import UUID
@@ -143,24 +144,49 @@ class InferencePipeline:
     async def run_batch(
         self,
         raw_observations: list[RawObservation],
+        concurrency: int = 5,
     ) -> list[tuple[NormalizedObservation, SignalInference]]:
-        """Run pipeline on a batch of observations.
-        
+        """Run pipeline on a batch of observations concurrently.
+
+        Processes observations concurrently up to ``concurrency`` at a time using
+        :class:`asyncio.Semaphore`, preserving input order in the output list.
+        Failed observations are logged but do not abort the batch; their
+        corresponding slot in the output list is omitted.
+
         Args:
-            raw_observations: List of raw observations
-            
+            raw_observations: List of raw observations to process.
+            concurrency: Maximum number of parallel pipeline executions (default 5).
+
         Returns:
-            List of (normalized_observation, signal_inference) tuples
+            List of (normalized_observation, signal_inference) tuples in the same
+            order as ``raw_observations``, excluding any that raised exceptions.
+
+        Raises:
+            ValueError: If ``concurrency`` is less than 1.
         """
-        results = []
-        for raw_obs in raw_observations:
-            try:
-                result = await self.run(raw_obs)
-                results.append(result)
-            except Exception as e:
-                logger.error(f"Error processing observation {raw_obs.id}: {e}", exc_info=True)
-                # Continue with next observation
-        
-        logger.info(f"Batch processing complete: {len(results)}/{len(raw_observations)} successful")
+        if concurrency < 1:
+            raise ValueError(f"concurrency must be >= 1, got {concurrency}")
+
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def _run_one(raw_obs: RawObservation) -> Optional[tuple[NormalizedObservation, SignalInference]]:
+            async with semaphore:
+                try:
+                    return await self.run(raw_obs)
+                except Exception as e:
+                    logger.error(
+                        f"Error processing observation {raw_obs.id}: {e}",
+                        exc_info=True,
+                    )
+                    return None
+
+        # Gather preserves input order; None sentinels are filtered out.
+        raw_results = await asyncio.gather(*[_run_one(obs) for obs in raw_observations])
+        results = [r for r in raw_results if r is not None]
+
+        logger.info(
+            f"Batch processing complete: {len(results)}/{len(raw_observations)} successful "
+            f"(concurrency={concurrency})"
+        )
         return results
 

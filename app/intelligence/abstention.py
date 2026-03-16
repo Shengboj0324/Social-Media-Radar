@@ -77,19 +77,31 @@ class AbstentionDecider:
         if inference.abstained:
             return True, inference.abstention_reason, inference.rationale or "Already abstained"
         
-        # Check confidence threshold
+        # Check confidence threshold using the calibrated confidence interval upper bound.
+        # We use the CI *upper* bound (most optimistic estimate) — if even the upper bound
+        # is below the threshold, we abstain.  This is stricter than using the raw probability
+        # and correctly uses the Calibrator's output rather than raw model logits.
         if inference.top_prediction:
-            if inference.top_prediction.probability < self.thresholds.min_confidence:
+            # Prefer calibrated CI upper bound when available; fall back to raw probability.
+            ci_upper = (
+                inference.calibration_metrics.confidence_interval_upper
+                if inference.calibration_metrics is not None
+                and inference.calibration_metrics.confidence_interval_upper is not None
+                else inference.top_prediction.probability
+            )
+            if ci_upper < self.thresholds.min_confidence:
                 return (
                     True,
                     AbstentionReason.LOW_CONFIDENCE,
-                    f"Confidence {inference.top_prediction.probability:.2f} below threshold {self.thresholds.min_confidence}"
+                    f"Calibrated CI upper bound {ci_upper:.2f} below threshold "
+                    f"{self.thresholds.min_confidence} (raw probability "
+                    f"{inference.top_prediction.probability:.2f})",
                 )
         else:
             return (
                 True,
                 AbstentionReason.LOW_CONFIDENCE,
-                "No top prediction available"
+                "No top prediction available",
             )
         
         # Check prediction disagreement

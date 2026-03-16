@@ -125,34 +125,48 @@ class LLMAdjudicator:
         Returns:
             Prompt string
         """
-        # System message
-        system = """You are an expert signal classifier for business intelligence.
-Your task is to analyze social media content and classify it into actionable signal types.
+        # Build signal-type glossary from dispatch table for injection into system prompt.
+        signal_glossary = "\n".join(
+            f"  {st.value}: {desc}"
+            for st, desc in self._SIGNAL_DESCRIPTIONS.items()
+        )
 
-You must output a valid JSON object with the following schema:
-{
-  "candidate_signal_types": ["type1", "type2"],
-  "primary_signal_type": "type1",
-  "confidence": 0.85,
-  "evidence_spans": [{"text": "...", "reason": "..."}],
-  "rationale": "Explanation of classification",
-  "requires_more_context": false,
-  "abstain": false,
-  "abstention_reason": null,
-  "risk_labels": ["public_reply_safe"],
-  "suggested_actions": ["reply_public"]
-}
+        # System message — CRITICAL: JSON-only output instruction is explicit.
+        system = f"""You are an expert signal classifier for business intelligence.
+Your task is to analyse social media content and classify it into exactly one primary actionable signal type.
 
-Signal types: support_request, feature_request, bug_report, complaint, praise,
-competitor_mention, alternative_seeking, price_sensitivity, integration_request,
-churn_risk, security_concern, legal_risk, reputation_risk,
-expansion_opportunity, upsell_opportunity, partnership_opportunity,
-unclear, not_actionable
+CRITICAL RULES:
+1. OUTPUT ONLY VALID JSON — no markdown fences, no prose before or after.
+2. Your entire response MUST be a single JSON object matching the schema below.
+3. If you are uncertain (confidence < 0.6), you MUST set "abstain": true and supply "abstention_reason".
+4. Never invent signal_type values outside the approved list below.
 
-Abstention reasons: low_confidence, ambiguous_multi_label, insufficient_context,
-out_of_distribution, unsafe_to_classify, language_barrier, spam_or_noise
+REQUIRED JSON SCHEMA (every key is mandatory):
+{{
+  "candidate_signal_types": ["<type>", ...],
+  "primary_signal_type": "<type>",
+  "confidence": <float 0-1>,
+  "evidence_spans": [{{"text": "<verbatim excerpt>", "reason": "<why it matters>"}}],
+  "rationale": "<one paragraph explanation>",
+  "requires_more_context": <bool>,
+  "abstain": <bool>,
+  "abstention_reason": "<reason_enum or null>",
+  "risk_labels": ["<label>"],
+  "suggested_actions": ["<action>"]
+}}
 
-If you are uncertain, set abstain=true and provide a reason."""
+APPROVED SIGNAL TYPES (use exact string values):
+{signal_glossary}
+
+APPROVED ABSTENTION REASONS:
+  low_confidence, ambiguous_multi_label, insufficient_context,
+  out_of_distribution, unsafe_to_classify, language_barrier, spam_or_noise
+
+ABSTENTION RULE: Set abstain=true and top type to "unclear" or "not_actionable" when:
+- Content is spam, gibberish, or emoji-only
+- Your confidence is below 0.6
+- Multiple signal types are equally plausible and you cannot distinguish them
+- The content is in a language you cannot reliably translate"""
         
         # Few-shot examples
         examples = self._get_few_shot_examples()
@@ -174,48 +188,96 @@ Classify this content and output valid JSON."""
         full_prompt = f"{system}\n\n{examples}\n\n{user_message}"
         return full_prompt
 
+    # Dispatch table: each SignalType maps to a one-line description used to
+    # build examples and system instructions.  O(1) lookup; add new types here.
+    _SIGNAL_DESCRIPTIONS: dict = {
+        SignalType.SUPPORT_REQUEST: "User needs help with the product (how-to, setup, usage).",
+        SignalType.FEATURE_REQUEST: "User wants a new feature or capability added.",
+        SignalType.BUG_REPORT: "User reports broken or incorrect behaviour.",
+        SignalType.COMPLAINT: "User expresses dissatisfaction without a specific request.",
+        SignalType.PRAISE: "User praises or thanks the product/team.",
+        SignalType.COMPETITOR_MENTION: "User explicitly names or compares a competitor product.",
+        SignalType.ALTERNATIVE_SEEKING: "User is actively looking for an alternative solution.",
+        SignalType.PRICE_SENSITIVITY: "User objects to pricing or asks for discounts.",
+        SignalType.INTEGRATION_REQUEST: "User wants the product to integrate with another tool.",
+        SignalType.CHURN_RISK: "User signals intent to cancel or switch providers.",
+        SignalType.SECURITY_CONCERN: "User raises a security, privacy, or compliance issue.",
+        SignalType.LEGAL_RISK: "User mentions legal threats, defamation, or regulation risk.",
+        SignalType.REPUTATION_RISK: "Content that could damage brand reputation if not addressed.",
+        SignalType.EXPANSION_OPPORTUNITY: "Organisation shows signs of growing and needing more.",
+        SignalType.UPSELL_OPPORTUNITY: "Current customer could benefit from a higher-tier plan.",
+        SignalType.PARTNERSHIP_OPPORTUNITY: "Organisation wants to partner, integrate, or co-market.",
+        SignalType.UNCLEAR: "Intent cannot be determined from the content alone.",
+        SignalType.NOT_ACTIONABLE: "Content is noise, spam, or requires no business response.",
+    }
+
     def _get_few_shot_examples(self) -> str:
-        """Get few-shot examples for prompting.
+        """Get comprehensive few-shot examples covering all 18 SignalType values.
+
+        Each example demonstrates the expected JSON output format and shows the
+        LLM how to handle the full taxonomy including abstention cases.
 
         Returns:
-            Few-shot examples string
+            Formatted few-shot examples string for insertion into the prompt.
         """
-        examples = """Example 1:
-Input: "Looking for a better alternative to Slack. Need something with better pricing."
-Output: {
-  "candidate_signal_types": ["alternative_seeking", "competitor_mention", "price_sensitivity"],
-  "primary_signal_type": "alternative_seeking",
-  "confidence": 0.92,
-  "evidence_spans": [
-    {"text": "better alternative to Slack", "reason": "explicit alternative seeking"},
-    {"text": "better pricing", "reason": "price sensitivity indicator"}
-  ],
-  "rationale": "User explicitly seeks alternative to competitor (Slack) with price as key factor",
-  "requires_more_context": false,
-  "abstain": false,
-  "abstention_reason": null,
-  "risk_labels": ["public_reply_safe"],
-  "suggested_actions": ["reply_public", "prepare_dm_followup"]
-}
+        return """
+### FEW-SHOT EXAMPLES (STUDY CAREFULLY)
 
-Example 2:
+--- EXAMPLE: alternative_seeking + price_sensitivity ---
+Input: "Looking for a better alternative to Slack. Need something with better pricing."
+Output:
+{"candidate_signal_types":["alternative_seeking","competitor_mention","price_sensitivity"],"primary_signal_type":"alternative_seeking","confidence":0.92,"evidence_spans":[{"text":"better alternative to Slack","reason":"explicit alternative seeking"},{"text":"better pricing","reason":"price sensitivity"}],"rationale":"User explicitly seeks a Slack alternative citing price concerns.","requires_more_context":false,"abstain":false,"abstention_reason":null,"risk_labels":["public_reply_safe"],"suggested_actions":["reply_public","prepare_dm_followup"]}
+
+--- EXAMPLE: praise + upsell_opportunity ---
 Input: "Your product is amazing! Just upgraded to Pro plan."
-Output: {
-  "candidate_signal_types": ["praise", "upsell_opportunity"],
-  "primary_signal_type": "praise",
-  "confidence": 0.95,
-  "evidence_spans": [
-    {"text": "product is amazing", "reason": "positive sentiment"},
-    {"text": "upgraded to Pro plan", "reason": "conversion event"}
-  ],
-  "rationale": "Clear positive feedback with successful upsell",
-  "requires_more_context": false,
-  "abstain": false,
-  "abstention_reason": null,
-  "risk_labels": ["public_reply_safe"],
-  "suggested_actions": ["thank_user", "request_testimonial"]
-}"""
-        return examples
+Output:
+{"candidate_signal_types":["praise","upsell_opportunity"],"primary_signal_type":"praise","confidence":0.95,"evidence_spans":[{"text":"product is amazing","reason":"positive sentiment"},{"text":"upgraded to Pro plan","reason":"conversion event"}],"rationale":"Clear praise with successful upsell already completed.","requires_more_context":false,"abstain":false,"abstention_reason":null,"risk_labels":["public_reply_safe"],"suggested_actions":["thank_user","request_testimonial"]}
+
+--- EXAMPLE: churn_risk ---
+Input: "Been thinking of switching after my renewal comes up. Support has gone downhill."
+Output:
+{"candidate_signal_types":["churn_risk","complaint"],"primary_signal_type":"churn_risk","confidence":0.85,"evidence_spans":[{"text":"thinking of switching after my renewal","reason":"explicit churn intent"},{"text":"support has gone downhill","reason":"dissatisfaction driver"}],"rationale":"User signals intent to switch on renewal with cited dissatisfaction.","requires_more_context":false,"abstain":false,"abstention_reason":null,"risk_labels":["dm_preferred"],"suggested_actions":["send_dm","offer_discount","escalate_support"]}
+
+--- EXAMPLE: complaint (sarcasm) ---
+Input: "Oh amazing, another outage. Truly world-class reliability 🙄"
+Output:
+{"candidate_signal_types":["complaint","reputation_risk"],"primary_signal_type":"complaint","confidence":0.88,"evidence_spans":[{"text":"another outage","reason":"product failure event"},{"text":"world-class reliability","reason":"sarcasm indicating dissatisfaction"}],"rationale":"Sarcastic praise is a complaint about reliability.","requires_more_context":false,"abstain":false,"abstention_reason":null,"risk_labels":["public_reply_needed"],"suggested_actions":["acknowledge_publicly","escalate_infra"]}
+
+--- EXAMPLE: feature_request ---
+Input: "It would be great if you added dark mode. I use this all day and my eyes are killing me."
+Output:
+{"candidate_signal_types":["feature_request"],"primary_signal_type":"feature_request","confidence":0.93,"evidence_spans":[{"text":"added dark mode","reason":"explicit feature request"}],"rationale":"User directly requests a specific UI feature.","requires_more_context":false,"abstain":false,"abstention_reason":null,"risk_labels":["public_reply_safe"],"suggested_actions":["acknowledge_request","log_to_backlog"]}
+
+--- EXAMPLE: bug_report ---
+Input: "The CSV export is broken — it always times out on files over 1MB."
+Output:
+{"candidate_signal_types":["bug_report","support_request"],"primary_signal_type":"bug_report","confidence":0.91,"evidence_spans":[{"text":"CSV export is broken","reason":"explicit bug statement"},{"text":"times out on files over 1MB","reason":"specific failure condition"}],"rationale":"User reports a reproducible bug with specific threshold.","requires_more_context":false,"abstain":false,"abstention_reason":null,"risk_labels":["internal_ticket_required"],"suggested_actions":["create_bug_ticket","reply_public"]}
+
+--- EXAMPLE: security_concern ---
+Input: "I noticed that user emails are visible in URL parameters. Is that a security issue?"
+Output:
+{"candidate_signal_types":["security_concern","support_request"],"primary_signal_type":"security_concern","confidence":0.89,"evidence_spans":[{"text":"user emails are visible in URL parameters","reason":"potential PII exposure"}],"rationale":"User identifies a possible PII leak via URL parameters.","requires_more_context":false,"abstain":false,"abstention_reason":null,"risk_labels":["internal_security_review","dm_preferred"],"suggested_actions":["send_dm","escalate_security_team"]}
+
+--- EXAMPLE: integration_request ---
+Input: "Any plans for a Zapier integration? We use it for all our automations."
+Output:
+{"candidate_signal_types":["integration_request","feature_request"],"primary_signal_type":"integration_request","confidence":0.87,"evidence_spans":[{"text":"Zapier integration","reason":"named integration target"}],"rationale":"User specifically requests integration with a named automation platform.","requires_more_context":false,"abstain":false,"abstention_reason":null,"risk_labels":["public_reply_safe"],"suggested_actions":["reply_public","log_to_backlog"]}
+
+--- EXAMPLE: partnership_opportunity ---
+Input: "We're building a complementary HR tool and would love to explore a joint go-to-market. Who do I contact?"
+Output:
+{"candidate_signal_types":["partnership_opportunity","expansion_opportunity"],"primary_signal_type":"partnership_opportunity","confidence":0.90,"evidence_spans":[{"text":"joint go-to-market","reason":"explicit partnership intent"},{"text":"complementary HR tool","reason":"product fit signal"}],"rationale":"Organisation seeking a commercial partnership and integration.","requires_more_context":false,"abstain":false,"abstention_reason":null,"risk_labels":["email_preferred"],"suggested_actions":["email_partnerships","schedule_call"]}
+
+--- EXAMPLE: not_actionable (spam) ---
+Input: "🔥 BEST DEALS CLICK NOW FREE GIFT 🔥 limited offer!!!"
+Output:
+{"candidate_signal_types":["not_actionable"],"primary_signal_type":"not_actionable","confidence":0.97,"evidence_spans":[],"rationale":"Content is promotional spam with no actionable business signal.","requires_more_context":false,"abstain":true,"abstention_reason":"spam_or_noise","risk_labels":[],"suggested_actions":[]}
+
+--- EXAMPLE: abstention (low confidence / ambiguous) ---
+Input: "meh"
+Output:
+{"candidate_signal_types":["unclear"],"primary_signal_type":"unclear","confidence":0.12,"evidence_spans":[],"rationale":"Single-word post with no discernible intent or context.","requires_more_context":true,"abstain":true,"abstention_reason":"insufficient_context","risk_labels":[],"suggested_actions":[]}
+"""
 
     def _format_candidates(self, candidates: List[SignalCandidate]) -> str:
         """Format candidates for prompt.

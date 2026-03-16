@@ -18,12 +18,15 @@ Design principles:
 - Team collaboration support
 """
 
+import asyncio
+import json
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import AsyncGenerator, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, func, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,6 +42,8 @@ from app.core.signal_models import (
     SignalSummary,
     SignalType,
 )
+from app.domain.raw_models import RawObservation
+from app.intelligence.inference_pipeline import InferencePipeline
 
 logger = logging.getLogger(__name__)
 
@@ -555,3 +560,131 @@ async def get_signal_stats(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve statistics",
         )
+
+
+
+# ---------------------------------------------------------------------------
+# SSE Streaming Inference Endpoint
+# ---------------------------------------------------------------------------
+
+async def _sse_inference_generator(
+    raw_observation: RawObservation,
+    pipeline: InferencePipeline,
+    request: Request,
+) -> AsyncGenerator[str, None]:
+    """Async generator that streams SSE events for a single inference run.
+
+    Yields structured ``data:`` lines in Server-Sent Events format.
+    Each event is a JSON object.  Three event types are emitted:
+
+    * ``{"event": "start", "observation_id": "..."}`` — pipeline started.
+    * ``{"event": "result", "normalized": {...}, "inference": {...}}`` — success.
+    * ``{"event": "error", "detail": "..."}`` — pipeline failure.
+    * ``{"event": "done"}`` — always emitted last.
+
+    Backpressure: the generator checks ``await request.is_disconnected()``
+    before emitting each event and exits early on client disconnect.
+
+    Args:
+        raw_observation: The raw observation to classify.
+        pipeline: Pre-built InferencePipeline instance.
+        request: FastAPI Request object (used for disconnect detection).
+
+    Yields:
+        SSE-formatted strings (``data: <json>\\n\\n``).
+    """
+
+    def _sse(obj: dict) -> str:
+        return f"data: {json.dumps(obj)}\n\n"
+
+    # Announce pipeline start
+    if await request.is_disconnected():
+        return
+    yield _sse({"event": "start", "observation_id": str(raw_observation.id)})
+
+    try:
+        normalized, inference = await pipeline.run(raw_observation)
+
+        if await request.is_disconnected():
+            return
+
+        yield _sse({
+            "event": "result",
+            "normalized": {
+                "id": str(normalized.id),
+                "source_platform": normalized.source_platform.value,
+                "normalized_text": (normalized.normalized_text or "")[:500],
+                "original_language": normalized.original_language,
+            },
+            "inference": {
+                "id": str(inference.id),
+                "abstained": inference.abstained,
+                "abstention_reason": (
+                    inference.abstention_reason.value
+                    if inference.abstention_reason else None
+                ),
+                "top_signal_type": (
+                    inference.top_prediction.signal_type.value
+                    if inference.top_prediction else None
+                ),
+                "top_probability": (
+                    inference.top_prediction.probability
+                    if inference.top_prediction else None
+                ),
+                "rationale": inference.rationale,
+                "calibration": (
+                    inference.calibration_metrics.model_dump()
+                    if inference.calibration_metrics else None
+                ),
+            },
+        })
+
+    except Exception as exc:
+        logger.error(f"SSE pipeline error for observation {raw_observation.id}: {exc}", exc_info=True)
+        if not await request.is_disconnected():
+            yield _sse({"event": "error", "detail": str(exc)})
+
+    finally:
+        if not await request.is_disconnected():
+            yield _sse({"event": "done"})
+
+
+@router.post("/stream", summary="Stream signal inference via SSE")
+async def stream_signal_inference(
+    raw_observation: RawObservation,
+    request: Request,
+) -> StreamingResponse:
+    """Stream signal inference results for a single raw observation via SSE.
+
+    Accepts a :class:`~app.domain.raw_models.RawObservation` payload, runs it
+    through the full :class:`~app.intelligence.inference_pipeline.InferencePipeline`,
+    and streams back structured events as ``text/event-stream``.
+
+    Client must handle three event types: ``start``, ``result``, and ``error``,
+    followed by a terminal ``done`` event.
+
+    Args:
+        raw_observation: The raw social-media observation to classify.
+        request: Injected FastAPI request (used for disconnect detection).
+
+    Returns:
+        ``StreamingResponse`` with ``Content-Type: text/event-stream``.
+    """
+    # Build a lightweight pipeline; all components use their default constructors.
+    # Translation and entity extraction are disabled for low-latency streaming.
+    pipeline = InferencePipeline(
+        normalization_engine=None,  # uses default (embeddings on, translation off)
+        candidate_retriever=None,
+        llm_adjudicator=None,
+        calibrator=None,
+        abstention_decider=None,
+    )
+
+    return StreamingResponse(
+        _sse_inference_generator(raw_observation, pipeline, request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable Nginx buffering for SSE
+        },
+    )

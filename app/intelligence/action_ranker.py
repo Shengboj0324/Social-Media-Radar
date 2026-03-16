@@ -23,14 +23,70 @@ logger = logging.getLogger(__name__)
 
 class ActionRanker:
     """Multi-dimensional action ranking system.
-    
+
     Scores signals across 4 dimensions:
     1. Opportunity: Business value potential
     2. Urgency: Time sensitivity
     3. Risk: Risk if not addressed
     4. Priority: Overall priority (weighted combination)
+
+    Dispatch tables (``_OPPORTUNITY_MAP``, ``_URGENCY_MAP``, ``_RISK_MAP``,
+    ``_CHANNEL_MAP``) replace if/elif chains for O(1) lookup and zero-friction
+    extensibility — add a new ``SignalType`` in one place only.
     """
-    
+
+    # ------------------------------------------------------------------
+    # Dispatch tables — O(1) lookup, easy to extend
+    # ------------------------------------------------------------------
+
+    # Opportunity scores (base, before engagement boosts)
+    _OPPORTUNITY_MAP: Dict[SignalType, float] = {
+        SignalType.ALTERNATIVE_SEEKING: 0.9,
+        SignalType.COMPETITOR_MENTION: 0.9,
+        SignalType.EXPANSION_OPPORTUNITY: 0.9,
+        SignalType.UPSELL_OPPORTUNITY: 0.9,
+        SignalType.PARTNERSHIP_OPPORTUNITY: 0.9,
+        SignalType.FEATURE_REQUEST: 0.7,
+        SignalType.INTEGRATION_REQUEST: 0.7,
+        SignalType.PRICE_SENSITIVITY: 0.7,
+        SignalType.SUPPORT_REQUEST: 0.4,
+        SignalType.BUG_REPORT: 0.4,
+        SignalType.COMPLAINT: 0.4,
+    }
+    _OPPORTUNITY_DEFAULT = 0.5
+
+    # Urgency scores (base, before freshness/velocity boosts)
+    _URGENCY_MAP: Dict[SignalType, float] = {
+        SignalType.CHURN_RISK: 0.9,
+        SignalType.SECURITY_CONCERN: 0.9,
+        SignalType.LEGAL_RISK: 0.9,
+        SignalType.REPUTATION_RISK: 0.9,
+        SignalType.COMPLAINT: 0.7,
+        SignalType.BUG_REPORT: 0.7,
+        SignalType.ALTERNATIVE_SEEKING: 0.7,
+        SignalType.PRAISE: 0.3,
+        SignalType.FEATURE_REQUEST: 0.3,
+    }
+    _URGENCY_DEFAULT = 0.5
+
+    # Risk scores (base, before platform/virality boosts)
+    _RISK_MAP: Dict[SignalType, float] = {
+        SignalType.CHURN_RISK: 0.95,
+        SignalType.SECURITY_CONCERN: 0.95,
+        SignalType.LEGAL_RISK: 0.95,
+        SignalType.REPUTATION_RISK: 0.95,
+        SignalType.COMPLAINT: 0.6,
+        SignalType.COMPETITOR_MENTION: 0.6,
+        SignalType.ALTERNATIVE_SEEKING: 0.6,
+        SignalType.PRAISE: 0.2,
+        SignalType.FEATURE_REQUEST: 0.2,
+        SignalType.SUPPORT_REQUEST: 0.2,
+    }
+    _RISK_DEFAULT = 0.3
+
+    # Channel dispatch table
+    _CHANNEL_MAP: Dict[SignalType, "ResponseChannel"] = {}  # populated after imports
+
     def __init__(
         self,
         opportunity_weight: float = 0.35,
@@ -62,6 +118,9 @@ class ActionRanker:
             self.urgency_weight /= total_weight
             self.risk_weight /= total_weight
         
+        # Initialise dispatch table eagerly (idempotent)
+        self._init_dispatch()
+
         logger.info(
             f"ActionRanker initialized: "
             f"opp={self.opportunity_weight:.2f}, "
@@ -182,53 +241,25 @@ class ActionRanker:
         inference: SignalInference,
         observation: NormalizedObservation,
     ) -> float:
-        """Compute business opportunity score.
+        """Compute business opportunity score using the dispatch table.
 
         Args:
-            inference: Signal inference
-            observation: Normalized observation
+            inference: Calibrated signal inference.
+            observation: Normalised observation.
 
         Returns:
-            Opportunity score (0-1)
+            Opportunity score in [0.0, 1.0].
         """
-        score = 0.5  # Base score
-
         if not inference.top_prediction:
-            return score
+            return self._OPPORTUNITY_DEFAULT
 
-        signal_type = inference.top_prediction.signal_type
+        score = self._OPPORTUNITY_MAP.get(
+            inference.top_prediction.signal_type, self._OPPORTUNITY_DEFAULT
+        )
 
-        # High opportunity signals
-        if signal_type in [
-            SignalType.ALTERNATIVE_SEEKING,
-            SignalType.COMPETITOR_MENTION,
-            SignalType.EXPANSION_OPPORTUNITY,
-            SignalType.UPSELL_OPPORTUNITY,
-            SignalType.PARTNERSHIP_OPPORTUNITY,
-        ]:
-            score = 0.9
-
-        # Medium opportunity signals
-        elif signal_type in [
-            SignalType.FEATURE_REQUEST,
-            SignalType.INTEGRATION_REQUEST,
-            SignalType.PRICE_SENSITIVITY,
-        ]:
-            score = 0.7
-
-        # Low opportunity signals
-        elif signal_type in [
-            SignalType.SUPPORT_REQUEST,
-            SignalType.BUG_REPORT,
-            SignalType.COMPLAINT,
-        ]:
-            score = 0.4
-
-        # Boost for high engagement
+        # Engagement boosts (additive, clamped)
         if observation.engagement_velocity and observation.engagement_velocity > 10:
             score = min(1.0, score + 0.1)
-
-        # Boost for high virality
         if observation.virality_score and observation.virality_score > 0.5:
             score = min(1.0, score + 0.1)
 
@@ -239,52 +270,27 @@ class ActionRanker:
         inference: SignalInference,
         observation: NormalizedObservation,
     ) -> float:
-        """Compute time sensitivity score.
+        """Compute time-sensitivity score using the dispatch table.
 
         Args:
-            inference: Signal inference
-            observation: Normalized observation
+            inference: Calibrated signal inference.
+            observation: Normalised observation.
 
         Returns:
-            Urgency score (0-1)
+            Urgency score in [0.0, 1.0].
         """
-        score = 0.5  # Base score
-
         if not inference.top_prediction:
-            return score
+            return self._URGENCY_DEFAULT
 
-        signal_type = inference.top_prediction.signal_type
+        score = self._URGENCY_MAP.get(
+            inference.top_prediction.signal_type, self._URGENCY_DEFAULT
+        )
 
-        # High urgency signals
-        if signal_type in [
-            SignalType.CHURN_RISK,
-            SignalType.SECURITY_CONCERN,
-            SignalType.LEGAL_RISK,
-            SignalType.REPUTATION_RISK,
-        ]:
-            score = 0.9
-
-        # Medium urgency signals
-        elif signal_type in [
-            SignalType.COMPLAINT,
-            SignalType.BUG_REPORT,
-            SignalType.ALTERNATIVE_SEEKING,
-        ]:
-            score = 0.7
-
-        # Low urgency signals
-        elif signal_type in [
-            SignalType.PRAISE,
-            SignalType.FEATURE_REQUEST,
-        ]:
-            score = 0.3
-
-        # Boost for recent content
+        # Freshness boost/penalty
         if observation.published_at:
             hours_old = (
                 datetime.now(timezone.utc) - observation.published_at
             ).total_seconds() / 3600
-
             if hours_old < 1:
                 score = min(1.0, score + 0.2)
             elif hours_old < 6:
@@ -292,7 +298,6 @@ class ActionRanker:
             elif hours_old > 48:
                 score = max(0.0, score - 0.2)
 
-        # Boost for high engagement velocity
         if observation.engagement_velocity and observation.engagement_velocity > 20:
             score = min(1.0, score + 0.1)
 
@@ -303,59 +308,30 @@ class ActionRanker:
         inference: SignalInference,
         observation: NormalizedObservation,
     ) -> float:
-        """Compute risk score if not addressed.
+        """Compute risk-if-unaddressed score using the dispatch table.
 
         Args:
-            inference: Signal inference
-            observation: Normalized observation
+            inference: Calibrated signal inference.
+            observation: Normalised observation.
 
         Returns:
-            Risk score (0-1)
+            Risk score in [0.0, 1.0].
         """
-        score = 0.3  # Base score
-
         if not inference.top_prediction:
-            return score
+            return self._RISK_DEFAULT
 
-        signal_type = inference.top_prediction.signal_type
+        score = self._RISK_MAP.get(
+            inference.top_prediction.signal_type, self._RISK_DEFAULT
+        )
 
-        # High risk signals
-        if signal_type in [
-            SignalType.CHURN_RISK,
-            SignalType.SECURITY_CONCERN,
-            SignalType.LEGAL_RISK,
-            SignalType.REPUTATION_RISK,
-        ]:
-            score = 0.95
-
-        # Medium risk signals
-        elif signal_type in [
-            SignalType.COMPLAINT,
-            SignalType.COMPETITOR_MENTION,
-            SignalType.ALTERNATIVE_SEEKING,
-        ]:
-            score = 0.6
-
-        # Low risk signals
-        elif signal_type in [
-            SignalType.PRAISE,
-            SignalType.FEATURE_REQUEST,
-            SignalType.SUPPORT_REQUEST,
-        ]:
-            score = 0.2
-
-        # Boost for public visibility (high-reach platforms)
-        public_platforms = [
-            SourcePlatform.REDDIT,
-            SourcePlatform.YOUTUBE,
-            SourcePlatform.TIKTOK,
-            SourcePlatform.FACEBOOK,
-            SourcePlatform.INSTAGRAM,
-        ]
-        if observation.source_platform in public_platforms:
+        # Public platform visibility boost
+        _PUBLIC_PLATFORMS = {
+            SourcePlatform.REDDIT, SourcePlatform.YOUTUBE,
+            SourcePlatform.TIKTOK, SourcePlatform.FACEBOOK, SourcePlatform.INSTAGRAM,
+        }
+        if observation.source_platform in _PUBLIC_PLATFORMS:
             score = min(1.0, score + 0.1)
 
-        # Boost for high virality (public spread)
         if observation.virality_score and observation.virality_score > 0.7:
             score = min(1.0, score + 0.15)
 
@@ -381,57 +357,62 @@ class ActionRanker:
         else:
             return ActionPriority.MONITOR
 
+    # Channel dispatch table — defined at class body level after ResponseChannel is imported.
+    # Maps every SignalType to its recommended ResponseChannel for O(1) lookup.
+    _CHANNEL_DISPATCH: Dict[SignalType, "ResponseChannel"] = {}  # populated in _init_dispatch
+
+    @classmethod
+    def _init_dispatch(cls) -> None:
+        """Populate the channel dispatch table (called once at first instantiation)."""
+        if cls._CHANNEL_DISPATCH:
+            return  # Already initialised
+        cls._CHANNEL_DISPATCH = {
+            # Public direct reply
+            SignalType.ALTERNATIVE_SEEKING: ResponseChannel.DIRECT_REPLY,
+            SignalType.COMPETITOR_MENTION: ResponseChannel.DIRECT_REPLY,
+            SignalType.PRAISE: ResponseChannel.DIRECT_REPLY,
+            SignalType.PRICE_SENSITIVITY: ResponseChannel.DIRECT_REPLY,
+            # Sensitive — private DM
+            SignalType.CHURN_RISK: ResponseChannel.DIRECT_MESSAGE,
+            SignalType.COMPLAINT: ResponseChannel.DIRECT_MESSAGE,
+            SignalType.SECURITY_CONCERN: ResponseChannel.DIRECT_MESSAGE,
+            SignalType.LEGAL_RISK: ResponseChannel.DIRECT_MESSAGE,
+            SignalType.REPUTATION_RISK: ResponseChannel.DIRECT_MESSAGE,
+            # Business opportunity — email
+            SignalType.PARTNERSHIP_OPPORTUNITY: ResponseChannel.EMAIL,
+            SignalType.EXPANSION_OPPORTUNITY: ResponseChannel.EMAIL,
+            SignalType.UPSELL_OPPORTUNITY: ResponseChannel.EMAIL,
+            # Internal workflow
+            SignalType.SUPPORT_REQUEST: ResponseChannel.INTERNAL_TICKET,
+            SignalType.BUG_REPORT: ResponseChannel.INTERNAL_TICKET,
+            SignalType.FEATURE_REQUEST: ResponseChannel.INTERNAL_TICKET,
+            SignalType.INTEGRATION_REQUEST: ResponseChannel.INTERNAL_TICKET,
+            # No response needed
+            SignalType.UNCLEAR: ResponseChannel.NO_RESPONSE,
+            SignalType.NOT_ACTIONABLE: ResponseChannel.NO_RESPONSE,
+        }
+
     def _determine_channel(
         self,
         inference: SignalInference,
         observation: NormalizedObservation,
     ) -> ResponseChannel:
-        """Determine recommended response channel.
+        """Determine recommended response channel via O(1) dispatch table lookup.
 
         Args:
-            inference: Signal inference
-            observation: Normalized observation
+            inference: Calibrated signal inference.
+            observation: Normalised observation (not used currently; reserved for
+                platform-specific channel overrides in future iterations).
 
         Returns:
-            ResponseChannel enum
+            :class:`~app.domain.action_models.ResponseChannel` enum value.
         """
         if not inference.top_prediction:
             return ResponseChannel.NO_RESPONSE
 
-        signal_type = inference.top_prediction.signal_type
-
-        # Direct reply for public signals
-        if signal_type in [
-            SignalType.ALTERNATIVE_SEEKING,
-            SignalType.COMPETITOR_MENTION,
-            SignalType.PRAISE,
-        ]:
-            return ResponseChannel.DIRECT_REPLY
-
-        # Direct message for sensitive signals
-        if signal_type in [
-            SignalType.CHURN_RISK,
-            SignalType.COMPLAINT,
-            SignalType.SECURITY_CONCERN,
-        ]:
-            return ResponseChannel.DIRECT_MESSAGE
-
-        # Email for business opportunities
-        if signal_type in [
-            SignalType.PARTNERSHIP_OPPORTUNITY,
-            SignalType.EXPANSION_OPPORTUNITY,
-            SignalType.UPSELL_OPPORTUNITY,
-        ]:
-            return ResponseChannel.EMAIL
-
-        # Internal ticket for support/bugs
-        if signal_type in [
-            SignalType.SUPPORT_REQUEST,
-            SignalType.BUG_REPORT,
-            SignalType.FEATURE_REQUEST,
-        ]:
-            return ResponseChannel.INTERNAL_TICKET
-
-        # Default to no response
-        return ResponseChannel.NO_RESPONSE
+        self._init_dispatch()
+        return self._CHANNEL_DISPATCH.get(
+            inference.top_prediction.signal_type,
+            ResponseChannel.NO_RESPONSE,
+        )
 

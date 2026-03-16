@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.errors import BaseAppException
 from app.core.health import HealthChecker
 from app.core.monitoring import MetricsCollector
+from app.monitoring.health import HealthMonitor
 
 
 @asynccontextmanager
@@ -88,6 +89,28 @@ async def readiness():
 async def liveness():
     """Liveness probe endpoint."""
     return {"status": "alive"}
+
+
+@app.get("/api/v1/health", tags=["Health"])
+async def intelligence_health():
+    """Full intelligence-layer health check.
+
+    Pings every LLM provider circuit breaker, verifies HNSW index
+    initialisation, and confirms database connectivity.
+
+    Returns:
+        HTTP 200 with a :class:`~app.monitoring.health.HealthReport` JSON body
+        when all critical components are healthy.
+        HTTP 503 when any critical component is unhealthy.
+    """
+    monitor = HealthMonitor()
+    report = await monitor.check()
+    if not report.healthy:
+        return JSONResponse(
+            status_code=503,
+            content=report.model_dump(),
+        )
+    return report.model_dump()
 
 
 # Exception handlers
