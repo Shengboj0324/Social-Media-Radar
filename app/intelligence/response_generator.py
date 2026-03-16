@@ -9,7 +9,7 @@ import re
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.signal_models import (
     ActionableSignal,
@@ -37,9 +37,7 @@ class ResponseVariant(BaseModel):
     overall_score: float = Field(ge=0.0, le=1.0)
     generated_at: datetime = Field(default_factory=datetime.utcnow)
 
-    class Config:
-        """Pydantic config."""
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class ResponseGenerator:

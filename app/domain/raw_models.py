@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.models import MediaType, SourcePlatform
 
@@ -47,10 +47,8 @@ class RawObservation(BaseModel):
         description="Platform-specific fields: upvotes, shares, hashtags, etc."
     )
     
-    class Config:
-        """Pydantic config."""
-        
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "source_platform": "reddit",
                 "source_id": "abc123",
@@ -64,10 +62,11 @@ class RawObservation(BaseModel):
                 "platform_metadata": {
                     "upvotes": 1234,
                     "num_comments": 56,
-                    "awards": ["gold", "helpful"]
-                }
+                    "awards": ["gold", "helpful"],
+                },
             }
         }
+    )
 
 
 class RawThread(BaseModel):

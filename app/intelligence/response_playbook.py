@@ -6,9 +6,9 @@ Each signal type has a tailored template with tone variations and channel constr
 
 import logging
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.signal_models import (
     ActionableSignal,
@@ -38,13 +38,11 @@ class ResponseTemplate(BaseModel):
     system_prompt: str
     user_prompt_template: str
     tone_variations: Dict[ResponseTone, str] = Field(default_factory=dict)
-    channel_constraints: Dict[ResponseChannel, Dict[str, any]] = Field(default_factory=dict)
+    channel_constraints: Dict[ResponseChannel, Dict[str, Any]] = Field(default_factory=dict)
     examples: List[str] = Field(default_factory=list)
     max_length: Optional[int] = 1000
 
-    class Config:
-        """Pydantic config."""
-        arbitrary_types_allowed = True
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 class ResponsePlaybook:

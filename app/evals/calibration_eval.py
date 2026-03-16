@@ -6,17 +6,20 @@ Blueprint §8 — Calibration metrics:
 - Reliability diagram data (bin_center, accuracy, confidence, count)
 - Overconfidence rate
 
-All computed over a batch with known binary labels (1 = correct class, 0 = not).
+Uses sklearn's calibration_curve for reliability diagram data and
+brier_score_loss for the Brier score.  ECE is computed from the
+calibration_curve output for bin-size weighting accuracy.
 """
 
 from __future__ import annotations
 
 import logging
-import math
 from dataclasses import dataclass, field
-from typing import List, Sequence, Tuple
+from typing import List, Sequence
 
 import numpy as np
+from sklearn.calibration import calibration_curve
+from sklearn.metrics import brier_score_loss
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +68,7 @@ class CalibrationEvaluator:
         probabilities: Sequence[float],
         labels: Sequence[int],
     ) -> CalibrationReport:
-        """Compute calibration metrics.
+        """Compute calibration metrics via sklearn.
 
         Parameters
         ----------
@@ -75,7 +78,7 @@ class CalibrationEvaluator:
             1 if the predicted class was correct, 0 otherwise.
         """
         probs = np.array(probabilities, dtype=float)
-        labs  = np.array(labels, dtype=float)
+        labs  = np.array(labels, dtype=int)
         n = len(probs)
 
         if n == 0:
@@ -85,61 +88,57 @@ class CalibrationEvaluator:
         if not np.all((labs == 0) | (labs == 1)):
             raise ValueError("labels must be binary (0 or 1)")
 
-        # ---- Brier score --------------------------------------------------
-        brier_score = float(np.mean((probs - labs) ** 2))
+        # ---- Brier score via sklearn --------------------------------------
+        brier = float(brier_score_loss(labs, probs))
 
-        # ---- ECE + reliability diagram ------------------------------------
+        # ---- Reliability diagram via sklearn calibration_curve -----------
+        # fraction_of_positives: actual accuracy per bin
+        # mean_predicted_value:  average predicted confidence per bin
+        frac_pos, mean_pred = calibration_curve(
+            labs, probs, n_bins=self.n_bins, strategy="uniform"
+        )
+
+        # Build per-bin records; some bins may be empty (calibration_curve skips them)
         bin_edges = np.linspace(0.0, 1.0, self.n_bins + 1)
         reliability_bins: List[ReliabilityBin] = []
         ece_numerator = 0.0
 
-        for i in range(self.n_bins):
-            lo, hi = bin_edges[i], bin_edges[i + 1]
-            # Include upper edge in last bin
-            mask = (probs >= lo) & (probs < hi) if i < self.n_bins - 1 else (probs >= lo) & (probs <= hi)
+        # Map sklearn bins back to edge ranges
+        bin_width = 1.0 / self.n_bins
+        for i, (avg_conf, avg_acc) in enumerate(zip(mean_pred, frac_pos)):
+            lo = i * bin_width
+            hi = lo + bin_width
+            # Count samples in this bin (uniform strategy)
+            mask = (probs >= lo) & (probs <= hi if i == self.n_bins - 1 else probs < hi)
             count = int(mask.sum())
-            if count == 0:
-                center = (lo + hi) / 2
-                reliability_bins.append(
-                    ReliabilityBin(lo, hi, center, 0.0, 0.0, 0, 0.0)
-                )
-                continue
-
-            avg_conf = float(probs[mask].mean())
-            avg_acc  = float(labs[mask].mean())
-            gap = avg_conf - avg_acc
+            gap = float(avg_conf - avg_acc)
             ece_numerator += count * abs(gap)
-
-            reliability_bins.append(
-                ReliabilityBin(
-                    bin_lower=lo, bin_upper=hi,
-                    bin_center=(lo + hi) / 2,
-                    avg_confidence=avg_conf,
-                    avg_accuracy=avg_acc,
-                    count=count,
-                    gap=gap,
-                )
-            )
+            reliability_bins.append(ReliabilityBin(
+                bin_lower=lo, bin_upper=hi,
+                bin_center=(lo + hi) / 2,
+                avg_confidence=float(avg_conf),
+                avg_accuracy=float(avg_acc),
+                count=count,
+                gap=gap,
+            ))
 
         ece = ece_numerator / n
-        occupied_bins = [b for b in reliability_bins if b.count > 0]
+        occupied = [b for b in reliability_bins if b.count > 0]
         overconfidence_rate = (
-            sum(1 for b in occupied_bins if b.gap > self.overconfidence_gap)
-            / len(occupied_bins)
-        ) if occupied_bins else 0.0
+            sum(1 for b in occupied if b.gap > self.overconfidence_gap) / len(occupied)
+        ) if occupied else 0.0
 
         report = CalibrationReport(
             ece=ece,
-            brier_score=brier_score,
+            brier_score=brier,
             overconfidence_rate=overconfidence_rate,
             reliability_bins=reliability_bins,
             total_samples=n,
             n_bins=self.n_bins,
         )
-
         logger.info(
             "CalibrationEvaluator: n=%d n_bins=%d ECE=%.4f Brier=%.4f overconf_rate=%.3f",
-            n, self.n_bins, ece, brier_score, overconfidence_rate,
+            n, self.n_bins, ece, brier, overconfidence_rate,
         )
         return report
 

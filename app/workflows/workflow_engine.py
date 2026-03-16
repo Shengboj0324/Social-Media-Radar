@@ -67,7 +67,9 @@ class WorkflowEngine:
         self.max_concurrent_workflows = max_concurrent_workflows
         self.step_handlers: Dict[StepType, Callable] = {}
         self._active_workflows: Dict[UUID, WorkflowExecution] = {}
-        self._execution_semaphore = asyncio.Semaphore(max_concurrent_workflows)
+        # Semaphore must be created inside a running event loop (Python 3.9 constraint).
+        # Initialize lazily on first use inside execute_workflow (which is async).
+        self._execution_semaphore: Optional[asyncio.Semaphore] = None
 
         logger.info(
             f"WorkflowEngine initialized with max_concurrent={max_concurrent_workflows}"
@@ -106,6 +108,8 @@ class WorkflowEngine:
         Raises:
             WorkflowExecutionError: If workflow execution fails
         """
+        if self._execution_semaphore is None:
+            self._execution_semaphore = asyncio.Semaphore(self.max_concurrent_workflows)
         async with self._execution_semaphore:
             # Create execution instance
             execution = WorkflowExecution(

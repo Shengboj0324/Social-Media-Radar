@@ -117,19 +117,19 @@ class AnthropicLLMClient(BaseLLMClient):
                     "content": msg.content,
                 })
         
-        # Call Anthropic API with streaming
-        kwargs = {
+        # Call Anthropic API with streaming.
+        # NOTE: messages.stream() is a context-manager — do NOT pass stream=True as kwarg.
+        stream_kwargs = {
             "model": self.model,
             "messages": anthropic_messages,
             "temperature": temperature,
             "max_tokens": max_tokens or 4096,
-            "stream": True,
         }
-        
+
         if system_message:
-            kwargs["system"] = system_message
-        
-        async with self.client.messages.stream(**kwargs) as stream:
+            stream_kwargs["system"] = system_message
+
+        async with self.client.messages.stream(**stream_kwargs) as stream:
             async for text in stream.text_stream:
                 yield text
 

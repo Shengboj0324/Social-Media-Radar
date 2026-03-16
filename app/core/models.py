@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MediaType(str, Enum):
@@ -68,13 +68,9 @@ class ContentItem(BaseModel):
     # Platform-specific metadata
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
-    class Config:
-        """Pydantic config."""
-
-        # Allow mutation for digest pipeline processing
-        validate_assignment = True
-
-        json_schema_extra = {
+    model_config = ConfigDict(
+        validate_assignment=True,
+        json_schema_extra={
             "example": {
                 "source_platform": "reddit",
                 "source_id": "abc123",
@@ -88,7 +84,8 @@ class ContentItem(BaseModel):
                 "topics": ["AI", "technology", "research"],
                 "lang": "en",
             }
-        }
+        },
+    )
 
 
 class UserInterestProfile(BaseModel):
@@ -151,11 +148,7 @@ class Cluster(BaseModel):
     platforms_represented: List[SourcePlatform] = Field(default_factory=list)
     perspective_summary: Optional[str] = None
 
-    class Config:
-        """Pydantic config."""
-
-        # Allow mutation for digest pipeline processing
-        validate_assignment = True
+    model_config = ConfigDict(validate_assignment=True)
 
 
 class DigestRequest(BaseModel):

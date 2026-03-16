@@ -13,7 +13,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SignalType(str, Enum):
@@ -92,22 +92,44 @@ class SignalPrediction(BaseModel):
 
 
 class CalibrationMetrics(BaseModel):
-    """Calibration quality metrics for this inference."""
-    
+    """Calibration quality metrics attached to a signal inference.
+
+    ECE and Brier score are batch metrics — they require ground-truth labels
+    from a validation set and are computed by app/evals/calibration_eval.py.
+    They are None for single-inference objects and only populated when the
+    model has been evaluated against a labelled holdout.
+
+    confidence_interval_lower / _upper are per-inference approximations
+    derived from the Bernoulli standard deviation of the top prediction's
+    probability and are always populated when top_prediction is present.
+    """
+
     expected_calibration_error: Optional[float] = Field(
         None,
         ge=0.0,
         le=1.0,
-        description="ECE score for this model on validation set"
+        description=(
+            "ECE over a labelled validation batch (None for single-inference objects). "
+            "Lower is better; < 0.05 is well-calibrated."
+        ),
     )
     brier_score: Optional[float] = Field(
         None,
         ge=0.0,
-        le=2.0,
-        description="Brier score (lower is better)"
+        le=1.0,
+        description=(
+            "Mean squared probability error over a labelled batch (None for single-inference). "
+            "Lower is better; 0.0 is perfect."
+        ),
     )
-    confidence_interval_lower: Optional[float] = Field(None, ge=0.0, le=1.0)
-    confidence_interval_upper: Optional[float] = Field(None, ge=0.0, le=1.0)
+    confidence_interval_lower: Optional[float] = Field(
+        None, ge=0.0, le=1.0,
+        description="Lower bound of the per-inference Bernoulli confidence interval.",
+    )
+    confidence_interval_upper: Optional[float] = Field(
+        None, ge=0.0, le=1.0,
+        description="Upper bound of the per-inference Bernoulli confidence interval.",
+    )
 
 
 class SignalInference(BaseModel):
@@ -172,10 +194,8 @@ class SignalInference(BaseModel):
         description="Model-specific metadata: token count, latency, temperature, etc."
     )
     
-    class Config:
-        """Pydantic config."""
-        
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "predictions": [
                     {
@@ -186,15 +206,16 @@ class SignalInference(BaseModel):
                                 "text": "would love to see dark mode",
                                 "start_char": 45,
                                 "end_char": 73,
-                                "relevance_score": 0.92
+                                "relevance_score": 0.92,
                             }
-                        ]
+                        ],
                     }
                 ],
                 "abstained": False,
                 "model_name": "gpt-4-turbo",
                 "model_version": "2024-01-15",
-                "inference_method": "llm_few_shot"
+                "inference_method": "llm_few_shot",
             }
         }
+    )
 

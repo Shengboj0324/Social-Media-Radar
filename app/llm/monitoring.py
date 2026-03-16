@@ -9,7 +9,7 @@ This module provides industrial-grade monitoring:
 """
 
 import logging
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from prometheus_client import Counter, Gauge, Histogram, Info
 
@@ -392,7 +392,7 @@ class LLMMetricsCollector:
 
         logger.info("Reset monthly costs")
 
-    def get_stats(self) -> Dict[str, any]:
+    def get_stats(self) -> Dict[str, Any]:
         """Get current statistics.
 
         Returns:

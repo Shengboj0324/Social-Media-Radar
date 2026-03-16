@@ -92,10 +92,10 @@ class LLMEnsemble:
 
         if LLMProvider.ANTHROPIC in self.providers:
             try:
-                from app.llm.anthropic_client import AnthropicLLMClient
+                from app.llm.providers.anthropic_provider import AnthropicLLMClient
                 self._clients[LLMProvider.ANTHROPIC] = AnthropicLLMClient()
-            except ImportError:
-                logger.warning("Anthropic client not available")
+            except (ImportError, ValueError) as e:
+                logger.warning(f"Anthropic client not available: {e}")
 
         if LLMProvider.GOOGLE in self.providers:
             try:

@@ -12,7 +12,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class MessageRole(str, Enum):
@@ -61,10 +61,7 @@ class LLMMessage(BaseModel):
             raise ValueError("Message content cannot be empty or whitespace only")
         return v.strip()
 
-    class Config:
-        """Pydantic config."""
-
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class TokenUsage(BaseModel):

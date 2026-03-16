@@ -179,8 +179,9 @@ class TestWeightedFusion(unittest.TestCase):
 class TestCrossModalSearch(unittest.TestCase):
     """Test cross-modal search functionality."""
 
-    async def test_cross_modal_search_sorting(self):
+    def test_cross_modal_search_sorting(self):
         """Test search results are sorted by similarity."""
+        import asyncio
         engine = MultimodalEmbeddingEngine()
 
         query_embedding = [1.0, 0.0, 0.0]
@@ -203,12 +204,12 @@ class TestCrossModalSearch(unittest.TestCase):
             ),
         ]
 
-        results = await engine.cross_modal_search(query_embedding, candidates, top_k=3)
+        results = asyncio.run(engine.cross_modal_search(query_embedding, candidates, top_k=3))
 
         # Results should be sorted by similarity (descending)
-        assert len(results) == 3
-        assert results[0].similarity >= results[1].similarity
-        assert results[1].similarity >= results[2].similarity
+        self.assertEqual(len(results), 3)
+        self.assertGreaterEqual(results[0].similarity, results[1].similarity)
+        self.assertGreaterEqual(results[1].similarity, results[2].similarity)
 
     def test_modality_filtering(self):
         """Test filtering by modality type."""

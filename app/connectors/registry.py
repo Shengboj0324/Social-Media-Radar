@@ -1,6 +1,6 @@
 """Connector registry for platform-specific connector instantiation."""
 
-from typing import Dict, Type
+from typing import Any, Dict, Type
 from uuid import UUID
 
 from app.connectors.abc_news import ABCNewsConnector
@@ -93,7 +93,7 @@ class ConnectorRegistry:
         cls._connectors[platform] = connector_class
 
     @classmethod
-    def get_platform_info(cls) -> Dict[str, Dict[str, any]]:
+    def get_platform_info(cls) -> Dict[str, Dict[str, Any]]:
         """Get information about all supported platforms.
         
         Returns:

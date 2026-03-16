@@ -1,20 +1,22 @@
 """Classification evaluation metrics.
 
 Blueprint §8 — Classification metrics:
-- macro F1, per-class precision / recall
-- abstain precision  (% of abstentions that were correct)
-- false-action rate  (% of low-confidence predictions that were still acted on)
+- macro F1, per-class precision / recall / support
+- abstain precision  (fraction of abstentions that avoided a wrong prediction)
+- false-action rate  (fraction of sub-threshold predictions that bypassed abstention)
 
-Pure-numpy implementation — no sklearn required.
+Uses scikit-learn for the core P/R/F1 computation so numerical correctness is
+guaranteed and consistent with the rest of the ML ecosystem.
 """
 
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence
+from typing import List, Optional, Sequence
 
 import numpy as np
+from sklearn.metrics import precision_recall_fscore_support
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +27,7 @@ class PerClassMetrics:
     precision: float
     recall: float
     f1: float
-    support: int  # number of true instances of this class
+    support: int
 
 
 @dataclass
@@ -34,20 +36,19 @@ class ClassificationReport:
     macro_precision: float
     macro_recall: float
     per_class: List[PerClassMetrics]
-    abstain_precision: Optional[float]   # None when no abstentions in batch
-    false_action_rate: Optional[float]   # None when confidence threshold not supplied
+    abstain_precision: Optional[float]   # None when no abstentions present
+    false_action_rate: Optional[float]   # None when confidence not supplied
     total_samples: int
     total_abstained: int
 
 
 class ClassificationEvaluator:
-    """Compute classification metrics over a batch of predictions.
+    """Compute classification metrics using sklearn over a batch of predictions.
 
     Parameters
     ----------
-    confidence_threshold:
-        Minimum confidence required to 'act' on a prediction.
-        Used only for false_action_rate computation.
+    confidence_threshold : float
+        Minimum confidence to 'act' on a prediction; used for false_action_rate.
     """
 
     def __init__(self, confidence_threshold: float = 0.7) -> None:
@@ -64,40 +65,42 @@ class ClassificationEvaluator:
 
         Parameters
         ----------
-        y_true:       Ground-truth label per sample.
-        y_pred:       Predicted label per sample (ignored when abstained).
-        y_abstain:    Boolean mask — True where the model abstained.
-        y_confidence: Predicted confidence per sample.
+        y_true       : Ground-truth label per sample.
+        y_pred       : Predicted label per sample (ignored for abstained rows).
+        y_abstain    : Boolean mask — True where the model abstained.
+        y_confidence : Predicted confidence per sample.
         """
         n = len(y_true)
         if n == 0:
             raise ValueError("Empty evaluation batch")
 
-        abstain_mask = list(y_abstain) if y_abstain else [False] * n
-        labels = sorted(set(y_true))
+        abstain_mask = list(y_abstain) if y_abstain is not None else [False] * n
+        total_abstained = int(sum(abstain_mask))
 
-        # Only score non-abstained predictions
+        # Restrict P/R/F1 computation to non-abstained rows only
         active_true = [t for t, a in zip(y_true, abstain_mask) if not a]
         active_pred = [p for p, a in zip(y_pred, abstain_mask) if not a]
+        labels = sorted(set(y_true))
 
-        per_class: List[PerClassMetrics] = []
-        for lbl in labels:
-            tp = sum(1 for t, p in zip(active_true, active_pred) if t == lbl and p == lbl)
-            fp = sum(1 for t, p in zip(active_true, active_pred) if t != lbl and p == lbl)
-            fn = sum(1 for t, p in zip(active_true, active_pred) if t == lbl and p != lbl)
-            prec = tp / (tp + fp) if (tp + fp) > 0 else 0.0
-            rec  = tp / (tp + fn) if (tp + fn) > 0 else 0.0
-            f1   = 2 * prec * rec / (prec + rec) if (prec + rec) > 0 else 0.0
-            per_class.append(PerClassMetrics(lbl, prec, rec, f1, tp + fn))
+        if active_true:
+            prec_arr, rec_arr, f1_arr, sup_arr = precision_recall_fscore_support(
+                active_true, active_pred, labels=labels,
+                average=None, zero_division=0,
+            )
+            macro_p, macro_r, macro_f, _ = precision_recall_fscore_support(
+                active_true, active_pred, average="macro", zero_division=0,
+            )
+            per_class = [
+                PerClassMetrics(lbl, float(p), float(r), float(f), int(s))
+                for lbl, p, r, f, s in zip(labels, prec_arr, rec_arr, f1_arr, sup_arr)
+            ]
+        else:
+            macro_p = macro_r = macro_f = 0.0
+            per_class = [PerClassMetrics(lbl, 0.0, 0.0, 0.0, 0) for lbl in labels]
 
-        macro_p = float(np.mean([m.precision for m in per_class])) if per_class else 0.0
-        macro_r = float(np.mean([m.recall    for m in per_class])) if per_class else 0.0
-        macro_f = float(np.mean([m.f1        for m in per_class])) if per_class else 0.0
-
-        # Abstain precision: fraction of abstentions where y_true was hard/ambiguous
-        # Proxy: abstained sample whose active-model prediction would have been wrong
+        # Abstain precision: among abstained rows, fraction where model would have
+        # been wrong (i.e., the abstention correctly avoided an error).
         abstain_precision: Optional[float] = None
-        total_abstained = sum(abstain_mask)
         if total_abstained > 0 and y_abstain is not None:
             would_be_wrong = sum(
                 1 for t, p, a in zip(y_true, y_pred, y_abstain)
@@ -105,28 +108,28 @@ class ClassificationEvaluator:
             )
             abstain_precision = would_be_wrong / total_abstained
 
-        # False-action rate: fraction of low-confidence predictions that were NOT abstained
+        # False-action rate: of the low-confidence rows, what fraction were NOT
+        # abstained (i.e., acted on despite low confidence — a safety failure).
         false_action_rate: Optional[float] = None
         if y_confidence is not None:
-            low_conf = [
-                (not a)
+            low_conf_acted = [
+                int(not a)
                 for c, a in zip(y_confidence, abstain_mask)
                 if c < self.confidence_threshold
             ]
-            if low_conf:
-                false_action_rate = sum(low_conf) / len(low_conf)
+            if low_conf_acted:
+                false_action_rate = float(np.mean(low_conf_acted))
 
         report = ClassificationReport(
-            macro_f1=macro_f,
-            macro_precision=macro_p,
-            macro_recall=macro_r,
+            macro_f1=float(macro_f),
+            macro_precision=float(macro_p),
+            macro_recall=float(macro_r),
             per_class=per_class,
             abstain_precision=abstain_precision,
             false_action_rate=false_action_rate,
             total_samples=n,
             total_abstained=total_abstained,
         )
-
         logger.info(
             "ClassificationEvaluator: n=%d abstained=%d macro_f1=%.3f "
             "abstain_prec=%s far=%s",

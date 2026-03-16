@@ -12,7 +12,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.domain.inference_models import SignalType
 
@@ -181,8 +181,5 @@ class ActionableSignal(BaseModel):
             raise ValueError(f"Score must be between 0.0 and 1.0, got {v}")
         return v
     
-    class Config:
-        """Pydantic config."""
-        
-        validate_assignment = True  # Allow status updates
+    model_config = ConfigDict(validate_assignment=True)
 

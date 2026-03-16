@@ -10,7 +10,7 @@ This module provides comprehensive evaluation capabilities:
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
@@ -285,7 +285,7 @@ class ModelEvaluator:
         tokenizer,
         test_data: List[Dict[str, str]],
         device: str = "cuda" if torch.cuda.is_available() else "cpu",
-    ) -> Dict[str, any]:
+    ) -> Dict[str, Any]:
         """Compare two models on the same test data.
 
         Args:
