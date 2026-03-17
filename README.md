@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🎯 Social Media Radar
+# 🎯 Inference Engine
 
 ### *The Next-Generation AI-Powered Intelligence Aggregation Platform*
 
@@ -20,7 +20,7 @@
 
 ## 🌟 Overview
 
-**Social Media Radar** is a **production-grade, AI-powered, multi-channel intelligence aggregation system** that revolutionizes how you consume and analyze information across the digital landscape. Built with industrial-level code quality and cutting-edge AI technologies, it transforms information overload into actionable intelligence.
+**Inference Engine** is a **production-grade, AI-powered, multi-channel intelligence aggregation system** that revolutionizes how you consume and analyze information across the digital landscape. Built with industrial-level code quality and cutting-edge AI technologies, it transforms information overload into actionable intelligence.
 
 ### 🎯 What Makes Us Different
 

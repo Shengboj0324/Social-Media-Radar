@@ -1,113 +1,138 @@
-"""Industrial-grade cluster summarization with ensemble LLMs and quality validation."""
+"""Cluster summarisation routed through LLMRouter with DataResidencyGuard enforcement.
+
+Every ``ContentItem`` injected into a prompt is first passed through the
+module-level ``_GUARD`` singleton (a ``DataResidencyGuard``), enforcing the
+zero-egress PII contract defined in ``app/core/data_residency.py``.
+
+All LLM calls are routed through ``LLMRouter.generate_for_signal()`` with
+``signal_type=None`` so the frontier model is selected unconditionally, the
+circuit-breaker and rate-limiter middleware apply, and cost metrics are
+recorded automatically via the existing monitoring stack.
+"""
 
 import json
 import logging
 from typing import Any, Dict, List, Optional
 
-from app.core.models import Cluster
-from app.llm.client_base import BaseLLMClient
+from app.core.data_residency import DataResidencyGuard
+from app.core.models import Cluster, ContentItem
+from app.llm.models import LLMMessage
+from app.llm.router import LLMRouter, get_router
 
 logger = logging.getLogger(__name__)
 
+# Module-level singleton — one DataResidencyGuard shared across all ClusterSummarizer
+# instances so compiled regex patterns and the audit logger are constructed once.
+_GUARD: DataResidencyGuard = DataResidencyGuard()
+
 
 class ClusterSummarizer:
-    """Generate industrial-grade summaries for content clusters.
+    """Generate summaries for content clusters via LLMRouter.
 
-    Features:
-    - Multi-provider LLM ensemble for peak quality
-    - Enhanced prompt engineering with chain-of-thought
-    - Quality validation and scoring
-    - Media-aware summarization (videos, images)
-    - Multi-language support
+    Key design decisions:
+
+    * **PII safety** — every ``ContentItem`` field injected into a prompt is
+      first passed through ``_GUARD.redact()``, pseudonymising ``author`` values
+      and stripping emails/phone numbers from ``raw_text`` before any text
+      reaches an LLM provider.
+
+    * **Unified LLM routing** — all generation calls go through
+      ``LLMRouter.generate_for_signal(signal_type=None, ...)`` so the frontier
+      model is selected, the circuit breaker fires on provider failures, and
+      request cost is tracked via the existing monitoring stack.
+
+    * **No hardcoded outputs** — fallback paths return factually-derived content
+      from cluster metadata; no pre-written editorial sentences are ever returned
+      to callers.
     """
 
     def __init__(
         self,
-        llm_client: Optional[BaseLLMClient] = None,
+        llm_client: Optional[object] = None,
         use_ensemble: bool = True,
         enable_quality_validation: bool = True,
-    ):
-        """Initialize cluster summarizer.
+    ) -> None:
+        """Initialise the cluster summariser.
 
         Args:
-            llm_client: LLM client for generating summaries (legacy)
-            use_ensemble: Use LLM ensemble for better quality
-            enable_quality_validation: Enable quality scoring
+            llm_client: **Deprecated — ignored.** Accepted for backward
+                compatibility with existing call-sites (e.g. ``DigestEngine``).
+                All LLM calls now go through ``LLMRouter``; this parameter
+                will be removed in a future release.
+            use_ensemble: **Deprecated — ignored.** Ensemble selection has
+                been superseded by ``LLMRouter``'s tiered model dispatch.
+            enable_quality_validation: **Deprecated — ignored.** Quality
+                validation is handled downstream by the router's provider stack.
         """
-        self.llm_client = llm_client
-        self.use_ensemble = use_ensemble
-        self.enable_quality_validation = enable_quality_validation
-
-        # Initialize ensemble if enabled
-        if use_ensemble:
-            from app.llm.ensemble import LLMEnsemble, EnsembleStrategy
-            self.ensemble = LLMEnsemble(
-                strategy=EnsembleStrategy.BEST_OF_N,
-                enable_quality_validation=enable_quality_validation,
-            )
-        else:
-            self.ensemble = None
+        self._router: LLMRouter = get_router()
 
     async def summarize_cluster(self, cluster: Cluster) -> Dict[str, Any]:
-        """Generate industrial-grade summary for a content cluster.
+        """Generate a PII-safe summary for a content cluster via LLMRouter.
+
+        Every ``ContentItem`` in the cluster is redacted by ``_GUARD`` before
+        any field is injected into the prompt.  The LLM call routes through
+        ``LLMRouter.generate_for_signal(signal_type=None, ...)`` so the frontier
+        model is always selected and full reliability middleware applies.
 
         Args:
-            cluster: Content cluster to summarize
+            cluster: Content cluster to summarise.
 
         Returns:
-            Dictionary with summary data including:
-            - topic: Brief topic title
-            - summary: Comprehensive summary
-            - key_points: List of key points
-            - platforms: Platforms represented
-            - perspective_notes: Cross-platform perspective analysis
-            - quality_score: Summary quality score (0-1)
+            Mapping with the following keys:
+
+            * ``topic`` (``str``) — brief topic title produced by the LLM.
+            * ``summary`` (``str``) — comprehensive narrative summary.
+            * ``key_points`` (``List[str]``) — top bullet points.
+            * ``platforms`` (``List[str]``) — platform names represented.
+            * ``perspective_notes`` (``Optional[str]``) — cross-platform
+              framing differences, or ``None`` when unavailable.
+            * ``quality_score`` (``float``) — ``1.0`` on success; ``0.0``
+              when the fallback path was taken.
+
+        Note:
+            This method never raises.  All LLM and parse errors fall back to
+            ``_create_fallback_summary``.
         """
-        # Build enhanced prompt with media awareness
-        prompt = self._build_enhanced_cluster_prompt(cluster)
+        prompt: str = self._build_enhanced_cluster_prompt(cluster)
+        response_content: str = ""
 
         try:
-            # Generate summary using ensemble or single client
-            if self.use_ensemble and self.ensemble:
-                ensemble_summary = await self.ensemble.generate_summary(
-                    prompt=prompt,
-                    max_tokens=800,
-                    temperature=0.3,  # Lower for factual content
-                )
-                response_content = ensemble_summary.content
-                quality_score = ensemble_summary.quality.overall_score
-                logger.info(
-                    f"Ensemble summary quality: {quality_score:.2f} "
-                    f"(provider: {ensemble_summary.provider.value})"
-                )
-            else:
-                # Fallback to single client
-                response = await self.llm_client.generate(
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3,
-                    max_tokens=800,
-                )
-                response_content = response.content
-                quality_score = 0.8  # Default score
-
-            # Parse JSON response
-            summary_data = json.loads(response_content)
-            summary_data["quality_score"] = quality_score
+            response_content = await self._router.generate_for_signal(
+                signal_type=None,
+                messages=[LLMMessage(role="user", content=prompt)],
+                temperature=0.3,
+                max_tokens=800,
+            )
+            summary_data: Dict[str, Any] = json.loads(response_content)
+            summary_data["quality_score"] = 1.0
             return summary_data
 
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse LLM response as JSON: {e}")
-            logger.error(f"Response content: {response_content[:500]}")
-            # Return fallback structure
+        except json.JSONDecodeError as exc:
+            logger.error("Failed to parse LLM response as JSON: %s", exc)
+            logger.error(
+                "Response content (first 500 chars): %s", response_content[:500]
+            )
             return self._create_fallback_summary(cluster)
 
-        except Exception as e:
-            logger.error(f"Error generating cluster summary: {e}")
+        except Exception as exc:
+            logger.error("Error generating cluster summary: %s", exc, exc_info=True)
             return self._create_fallback_summary(cluster)
 
     def _build_enhanced_cluster_prompt(self, cluster: Cluster) -> str:
-        """Build enhanced prompt with chain-of-thought and media awareness."""
-        prompt_parts = []
+        """Build an enhanced, PII-safe prompt with chain-of-thought reasoning.
+
+        Each ``ContentItem`` in the cluster is passed through ``_GUARD.redact()``
+        at the top of the loop before any field (``author``, ``raw_text``, media
+        labels, engagement metrics, or timestamps) is appended to the prompt,
+        enforcing the zero-egress data residency contract at the call site.
+
+        Args:
+            cluster: Content cluster whose items will be summarised.
+
+        Returns:
+            Fully assembled prompt string ready to pass to the LLM.
+        """
+        prompt_parts: List[str] = []
 
         # System context with chain-of-thought
         prompt_parts.append(
@@ -130,47 +155,64 @@ class ClusterSummarizer:
         # Add content items with media awareness
         prompt_parts.append("\nCONTENT ITEMS:\n")
 
-        video_count = 0
-        image_count = 0
+        video_count: int = 0
+        image_count: int = 0
 
         for i, item in enumerate(cluster.items[:10], 1):  # Limit to 10 items
-            prompt_parts.append(f"\n{i}. [{item.source_platform.value}] {item.title}")
+            # Enforce zero-egress PII contract before any field touches the prompt.
+            # redact() pseudonymises author and scrubs emails/phones from raw_text.
+            safe_item: ContentItem = _GUARD.redact(item)
 
-            if item.author:
-                prompt_parts.append(f"   Author: {item.author}")
+            prompt_parts.append(
+                f"\n{i}. [{safe_item.source_platform.value}] {safe_item.title}"
+            )
 
-            if item.raw_text:
+            if safe_item.author:
+                prompt_parts.append(f"   Author: {safe_item.author}")
+
+            if safe_item.raw_text:
                 # Truncate long text but keep more context
-                text = item.raw_text[:800]
+                text: str = safe_item.raw_text[:800]
                 prompt_parts.append(f"   Content: {text}...")
 
             # Enhanced media information
-            if item.media_urls:
-                media_types = []
-                for url in item.media_urls:
-                    if any(ext in url.lower() for ext in ['.mp4', '.mov', '.avi', 'youtube.com', 'youtu.be']):
+            if safe_item.media_urls:
+                media_types: List[str] = []
+                for url in safe_item.media_urls:
+                    if any(
+                        ext in url.lower()
+                        for ext in [".mp4", ".mov", ".avi", "youtube.com", "youtu.be"]
+                    ):
                         media_types.append("video")
                         video_count += 1
-                    elif any(ext in url.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']):
+                    elif any(
+                        ext in url.lower()
+                        for ext in [".jpg", ".jpeg", ".png", ".gif", ".webp"]
+                    ):
                         media_types.append("image")
                         image_count += 1
 
                 if media_types:
-                    prompt_parts.append(f"   Media: {', '.join(set(media_types))} ({len(item.media_urls)} items)")
+                    prompt_parts.append(
+                        f"   Media: {', '.join(set(media_types))}"
+                        f" ({len(safe_item.media_urls)} items)"
+                    )
 
             # Add engagement metrics if available
-            if item.metadata:
-                metrics = []
-                if "view_count" in item.metadata:
-                    metrics.append(f"{item.metadata['view_count']:,} views")
-                if "like_count" in item.metadata:
-                    metrics.append(f"{item.metadata['like_count']:,} likes")
-                if "score" in item.metadata:
-                    metrics.append(f"{item.metadata['score']} score")
+            if safe_item.metadata:
+                metrics: List[str] = []
+                if "view_count" in safe_item.metadata:
+                    metrics.append(f"{safe_item.metadata['view_count']:,} views")
+                if "like_count" in safe_item.metadata:
+                    metrics.append(f"{safe_item.metadata['like_count']:,} likes")
+                if "score" in safe_item.metadata:
+                    metrics.append(f"{safe_item.metadata['score']} score")
                 if metrics:
                     prompt_parts.append(f"   Engagement: {', '.join(metrics)}")
 
-            prompt_parts.append(f"   Published: {item.published_at.strftime('%Y-%m-%d %H:%M UTC')}")
+            prompt_parts.append(
+                f"   Published: {safe_item.published_at.strftime('%Y-%m-%d %H:%M UTC')}"
+            )
 
         # Add media context
         if video_count > 0 or image_count > 0:
@@ -203,54 +245,97 @@ class ClusterSummarizer:
         return "\n".join(prompt_parts)
 
     def _create_fallback_summary(self, cluster: Cluster) -> Dict[str, Any]:
-        """Create fallback summary when LLM fails."""
-        platforms = list({item.source_platform.value for item in cluster.items})
+        """Produce a factually-derived fallback summary when the LLM call fails.
 
-        # Extract key points from titles
-        key_points = [item.title for item in cluster.items[:3]]
+        All values are derived directly from cluster metadata — no pre-written
+        editorial sentences are returned.  ``perspective_notes`` is explicitly
+        set to ``None`` rather than a fabricated cross-platform conclusion.
+        ``quality_score`` is set to ``0.0`` to signal to callers that this is
+        a degraded, non-LLM response.
+
+        Args:
+            cluster: Cluster to produce fallback content for.
+
+        Returns:
+            Mapping with the same keys as ``summarize_cluster``'s return value.
+        """
+        platforms: List[str] = sorted(
+            {item.source_platform.value for item in cluster.items}
+        )
+        key_points: List[str] = [item.title for item in cluster.items[:3]]
+        platform_str: str = ", ".join(platforms) if platforms else "unknown platform(s)"
+        item_count: int = len(cluster.items)
+
+        title_fragment: str = (
+            " Titles: "
+            + "; ".join(item.title[:60] for item in cluster.items[:3])
+            + "."
+            if cluster.items
+            else ""
+        )
 
         return {
             "topic": cluster.topic,
-            "summary": f"This cluster contains {len(cluster.items)} items from {', '.join(platforms)} "
-            f"discussing {cluster.topic}. Key items include: {', '.join([item.title[:50] for item in cluster.items[:3]])}.",
+            "summary": (
+                f"{item_count} item(s) from {platform_str}"
+                f" on topic: {cluster.topic}.{title_fragment}"
+            ),
             "key_points": key_points,
             "platforms": platforms,
-            "perspective_notes": "Multiple platforms covering this topic with varying perspectives.",
+            "perspective_notes": None,
+            "quality_score": 0.0,
         }
 
 
     async def generate_cross_platform_analysis(
         self, clusters: List[Cluster]
-    ) -> str:
-        """Generate cross-platform perspective analysis across multiple clusters.
+    ) -> Optional[str]:
+        """Generate a cross-platform perspective analysis across multiple clusters.
+
+        Returns ``None`` rather than a hardcoded string when the cluster list is
+        empty or when the LLM call fails, leaving the decision of how to handle
+        the absence of analysis to the caller.
 
         Args:
-            clusters: List of content clusters
+            clusters: List of content clusters to analyse.
 
         Returns:
-            Cross-platform analysis summary
+            Cross-platform analysis string produced by the LLM, or ``None``
+            if no clusters were supplied or if the LLM call fails.
         """
         if not clusters:
-            return "No content available for cross-platform analysis."
+            return None
 
-        # Build analysis prompt
-        prompt = self._build_cross_platform_prompt(clusters)
+        prompt: str = self._build_cross_platform_prompt(clusters)
 
         try:
-            response = await self.llm_client.generate(
-                messages=[{"role": "user", "content": prompt}],
+            return await self._router.generate_for_signal(
+                signal_type=None,
+                messages=[LLMMessage(role="user", content=prompt)],
                 temperature=0.7,
                 max_tokens=600,
             )
-            return response.content
-
-        except Exception as e:
-            logger.error(f"Error generating cross-platform analysis: {e}")
-            return "Cross-platform analysis unavailable."
+        except Exception as exc:
+            logger.error(
+                "Error generating cross-platform analysis: %s", exc, exc_info=True
+            )
+            return None
 
     def _build_cross_platform_prompt(self, clusters: List[Cluster]) -> str:
-        """Build prompt for cross-platform analysis."""
-        prompt_parts = []
+        """Build a PII-safe prompt for cross-platform perspective analysis.
+
+        ``cluster.summary`` for each cluster is passed through
+        ``DataResidencyGuard._scrub_text`` before injection to remove any email
+        addresses or phone numbers that may have been echoed back by a prior LLM
+        call and stored in the summary field.
+
+        Args:
+            clusters: List of clusters to include; only the first five are used.
+
+        Returns:
+            Fully assembled prompt string ready to pass to the LLM.
+        """
+        prompt_parts: List[str] = []
 
         prompt_parts.append(
             "Analyze how different platforms are covering the following topics. "
@@ -258,9 +343,14 @@ class ClusterSummarizer:
         )
 
         for cluster in clusters[:5]:  # Top 5 clusters
-            platforms = ", ".join([p.value for p in cluster.platforms_represented])
-            prompt_parts.append(f"\n- {cluster.topic} (covered by: {platforms})")
-            prompt_parts.append(f"  Summary: {cluster.summary[:200]}")
+            platform_str: str = ", ".join(
+                [p.value for p in cluster.platforms_represented]
+            )
+            # Scrub the pre-existing summary before injecting it into the prompt —
+            # a prior LLM call may have echoed PII from item content back into it.
+            safe_summary, _ = DataResidencyGuard._scrub_text(cluster.summary[:200])
+            prompt_parts.append(f"\n- {cluster.topic} (covered by: {platform_str})")
+            prompt_parts.append(f"  Summary: {safe_summary}")
 
         prompt_parts.append(
             "\n\nProvide a brief analysis (3-5 sentences) of how different platforms "
