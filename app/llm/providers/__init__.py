@@ -4,6 +4,7 @@ This package contains all LLM provider implementations:
 - OpenAI (GPT-4o, GPT-4 Turbo, GPT-4o-mini, GPT-3.5 Turbo)
 - Anthropic (Claude 3.5 Sonnet, Claude 3.5 Haiku, Claude 3 Opus)
 - vLLM (Llama 3.1, Mixtral, Qwen, any HuggingFace model)
+- Ollama (local offline inference — competitive_analysis.md §5.2)
 """
 
 import logging
@@ -35,11 +36,19 @@ except ImportError as e:
     logger.warning(f"Anthropic provider not available: {e}")
     AnthropicLLMClient = None
 
-# vLLM provider (requires httpx for API calls)
+# vLLM provider (requires aiohttp for API calls)
 try:
     from app.llm.providers.vllm_provider import VLLMClient
     __all__.append("VLLMClient")
 except ImportError as e:
     logger.warning(f"vLLM provider not available: {e}")
     VLLMClient = None
+
+# Ollama provider — local offline LLM (requires aiohttp)
+try:
+    from app.llm.providers.ollama_provider import OllamaProvider
+    __all__.append("OllamaProvider")
+except ImportError as e:
+    logger.warning(f"Ollama provider not available: {e}")
+    OllamaProvider = None
 

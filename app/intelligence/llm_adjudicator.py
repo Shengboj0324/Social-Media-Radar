@@ -26,6 +26,7 @@ from app.domain.inference_models import (
     EvidenceSpan,
 )
 from app.intelligence.candidate_retrieval import SignalCandidate
+from app.llm.models import LLMMessage
 from app.llm.router import get_router
 
 logger = logging.getLogger(__name__)
@@ -92,9 +93,14 @@ class LLMAdjudicator:
         """
         # Build prompt
         prompt = self._build_prompt(observation, candidates)
-        
-        # Call LLM with retries
-        llm_output = await self._call_llm_with_retries(prompt)
+
+        # Determine the top-candidate signal type for tiered routing.
+        # High-stakes types (CHURN_RISK, LEGAL_RISK, etc.) will route to the
+        # frontier model; all others route to the fine-tuned model if configured.
+        top_candidate_type = candidates[0].signal_type if candidates else None
+
+        # Call LLM with retries (passes signal_type for tiered routing)
+        llm_output = await self._call_llm_with_retries(prompt, signal_type=top_candidate_type)
         
         # Parse and validate output
         try:
@@ -298,20 +304,38 @@ Output:
             )
         return "\n".join(lines)
 
-    async def _call_llm_with_retries(self, prompt: str) -> Dict[str, Any]:
-        """Call LLM with retry logic for malformed outputs.
+    async def _call_llm_with_retries(
+        self,
+        prompt: str,
+        signal_type: Optional["SignalType"] = None,
+    ) -> Dict[str, Any]:
+        """Call LLM via tiered routing with retry logic for malformed outputs.
+
+        Uses ``LLMRouter.generate_for_signal()`` to route high-stakes signal
+        types to the frontier model and other types to the configured
+        fine-tuned model (falling back to frontier when not configured).
 
         Args:
-            prompt: Prompt string
+            prompt: Prompt string built by ``_build_prompt``.
+            signal_type: Top-candidate signal type from retrieval; used to
+                select the appropriate model tier.  ``None`` defaults to the
+                frontier model.
 
         Returns:
-            Parsed JSON output
+            Parsed JSON dict matching the ``LLMAdjudicationOutput`` schema.
+
+        Raises:
+            ValueError: If a valid JSON response cannot be obtained after
+                ``self.max_retries`` attempts.
         """
+        messages = [LLMMessage(role="user", content=prompt)]
+
         for attempt in range(self.max_retries):
             try:
-                # Call LLM via generate_simple (returns str directly)
-                content = await self.llm_router.generate_simple(
-                    prompt=prompt,
+                # Route to appropriate model tier based on signal type
+                content = await self.llm_router.generate_for_signal(
+                    signal_type=signal_type,
+                    messages=messages,
                     max_tokens=1000,
                     temperature=self.temperature,
                 )
@@ -333,8 +357,17 @@ Output:
                 logger.warning(f"Attempt {attempt + 1}/{self.max_retries} failed: {e}")
 
                 if attempt < self.max_retries - 1:
-                    # Add repair instruction
-                    prompt += "\n\nYour previous output was malformed. Please output ONLY valid JSON."
+                    # Append repair instruction to message history
+                    messages = messages + [
+                        LLMMessage(role="assistant", content="(malformed output)"),
+                        LLMMessage(
+                            role="user",
+                            content=(
+                                "Your previous output was malformed. "
+                                "Output ONLY valid JSON — no prose, no markdown fences."
+                            ),
+                        ),
+                    ]
                 else:
                     # Final attempt failed
                     raise ValueError(f"Failed to get valid JSON after {self.max_retries} attempts")

@@ -35,12 +35,14 @@ from sqlalchemy.orm import selectinload
 from app.api.routes.auth import get_current_user
 from app.core.db import get_db
 from app.core.db_models import ActionableSignalDB, User
+from app.core.models import TeamRole
 from app.core.signal_models import (
     ActionableSignal,
     SignalFilter,
     SignalStatus,
     SignalSummary,
     SignalType,
+    TeamDigest,
 )
 from app.domain.raw_models import RawObservation
 from app.intelligence.inference_pipeline import InferencePipeline
@@ -75,9 +77,22 @@ class DismissRequest(BaseModel):
 
 
 class AssignRequest(BaseModel):
-    """Request to assign signal to team member."""
+    """Request to assign signal to a team member.
+
+    The requesting user must have ``TeamRole.MANAGER`` (or higher) access.
+    Enforced by ``POST /{signal_id}/assign`` — returns HTTP 403 otherwise.
+    """
 
     user_id: UUID = Field(..., description="User ID to assign to")
+    team_id: Optional[UUID] = Field(None, description="Team scope for this assignment")
+    requester_role: TeamRole = Field(
+        ...,
+        description=(
+            "Role of the user making the request. "
+            "Must be MANAGER or higher. "
+            "Clients should obtain this from their session/JWT."
+        ),
+    )
 
 
 class SignalStats(BaseModel):
@@ -687,4 +702,199 @@ async def stream_signal_inference(
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",  # Disable Nginx buffering for SSE
         },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Team Collaboration endpoints (competitive_analysis.md §5.5)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/{signal_id}/assign", response_model=ActionableSignal)
+async def assign_signal(
+    signal_id: UUID,
+    request: AssignRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Assign a signal to a team member.
+
+    Requires the requesting user to hold at least the ``MANAGER`` role in
+    ``request.requester_role``.  Returns HTTP 403 if the requester's role is
+    ``VIEWER`` or ``ANALYST``.
+
+    Args:
+        signal_id: Signal to assign.
+        request: Assignment payload (target user, team_id, requester_role).
+        current_user: Authenticated user making the request.
+        db: Database session.
+
+    Returns:
+        Updated :class:`~app.core.signal_models.ActionableSignal`.
+
+    Raises:
+        HTTPException 403: If ``request.requester_role`` is below ``MANAGER``.
+        HTTPException 404: If the signal does not exist or is not owned by
+            the current user.
+    """
+    # Role gate — MANAGER or higher required
+    if not TeamRole.has_role_at_least(request.requester_role, TeamRole.MANAGER):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                f"Insufficient privileges: 'assign' requires MANAGER role or higher. "
+                f"Current role: {request.requester_role.value}"
+            ),
+        )
+
+    try:
+        result = await db.execute(
+            select(ActionableSignalDB).where(
+                and_(
+                    ActionableSignalDB.id == signal_id,
+                    ActionableSignalDB.user_id == current_user.id,
+                )
+            )
+        )
+        signal_db = result.scalar_one_or_none()
+
+        if not signal_db:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Signal not found",
+            )
+
+        signal_db.assigned_to = request.user_id
+        signal_db.team_id = request.team_id
+        signal_db.assigned_role = request.requester_role.value
+        if signal_db.status == SignalStatus.NEW:
+            signal_db.status = SignalStatus.QUEUED
+
+        await db.commit()
+        await db.refresh(signal_db)
+
+        logger.info(
+            "Signal %s assigned to user %s by %s (role=%s team=%s)",
+            signal_id,
+            request.user_id,
+            current_user.id,
+            request.requester_role.value,
+            request.team_id,
+        )
+
+        return ActionableSignal(
+            id=signal_db.id,
+            user_id=signal_db.user_id,
+            signal_type=signal_db.signal_type,
+            source_item_ids=signal_db.source_item_ids,
+            source_platform=signal_db.source_platform,
+            source_url=signal_db.source_url,
+            source_author=signal_db.source_author,
+            title=signal_db.title,
+            description=signal_db.description,
+            context=signal_db.context,
+            urgency_score=signal_db.urgency_score,
+            impact_score=signal_db.impact_score,
+            confidence_score=signal_db.confidence_score,
+            action_score=signal_db.action_score,
+            recommended_action=signal_db.recommended_action,
+            suggested_channel=signal_db.suggested_channel,
+            suggested_tone=signal_db.suggested_tone,
+            draft_response=signal_db.draft_response,
+            draft_post=signal_db.draft_post,
+            draft_dm=signal_db.draft_dm,
+            positioning_angle=signal_db.positioning_angle,
+            status=signal_db.status,
+            assigned_to=signal_db.assigned_to,
+            created_at=signal_db.created_at,
+            expires_at=signal_db.expires_at,
+            acted_at=signal_db.acted_at,
+            outcome_feedback=signal_db.outcome_feedback,
+            metadata=signal_db.metadata_,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to assign signal %s: %s", signal_id, exc)
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to assign signal",
+        )
+
+
+@router.get("/team", response_model=TeamDigest)
+async def get_team_digest(
+    team_id: UUID = Query(..., description="Team UUID to generate digest for"),
+    requester_role: TeamRole = Query(
+        ..., description="Role of the requesting user (VIEWER, ANALYST, MANAGER)"
+    ),
+    days: int = Query(default=7, ge=1, le=90, description="Digest window in days"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a team signal digest with counts by status and type.
+
+    VIEWERs receive a read-only subset of fields (``total_signals``,
+    ``by_status``, ``by_type``).  ``unassigned_count`` and
+    ``high_urgency_count`` are only populated for ANALYST and above.
+
+    Args:
+        team_id: UUID of the team to summarise.
+        requester_role: Role claimed by the caller.  Determines which fields
+            are populated in the response.
+        days: Number of days back from now to include in the digest window.
+        current_user: Authenticated user.
+        db: Database session.
+
+    Returns:
+        :class:`~app.core.signal_models.TeamDigest` for the requested team.
+    """
+    from datetime import timedelta
+
+    now = datetime.utcnow()
+    period_start = now - timedelta(days=days)
+
+    # Fetch all signals for this team within the window
+    query = select(ActionableSignalDB).where(
+        and_(
+            ActionableSignalDB.team_id == team_id,
+            ActionableSignalDB.created_at >= period_start,
+        )
+    )
+    result = await db.execute(query)
+    signals = result.scalars().all()
+
+    by_status: dict = {}
+    by_type: dict = {}
+    unassigned = 0
+    high_urgency = 0
+
+    for sig in signals:
+        # Count by status
+        s_key = sig.status.value if sig.status else "unknown"
+        by_status[s_key] = by_status.get(s_key, 0) + 1
+
+        # Count by type
+        t_key = sig.signal_type.value if sig.signal_type else "unknown"
+        by_type[t_key] = by_type.get(t_key, 0) + 1
+
+        # Richer fields for ANALYST+
+        if TeamRole.has_role_at_least(requester_role, TeamRole.ANALYST):
+            if sig.assigned_to is None:
+                unassigned += 1
+            urgency = getattr(sig, "urgency_score", None) or 0.0
+            if urgency >= 0.8:
+                high_urgency += 1
+
+    return TeamDigest(
+        team_id=team_id,
+        period_start=period_start,
+        period_end=now,
+        total_signals=len(signals),
+        by_status=by_status,
+        by_type=by_type,
+        unassigned_count=unassigned,
+        high_urgency_count=high_urgency,
     )

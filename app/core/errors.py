@@ -65,6 +65,9 @@ class ErrorCode(str, Enum):
     MEDIA_PROCESSING_ERROR = "9002"
     MEDIA_UPLOAD_ERROR = "9003"
 
+    # Data residency errors (10xxx)
+    DATA_RESIDENCY_VIOLATION = "10000"
+
 
 class ErrorSeverity(str, Enum):
     """Error severity levels."""
@@ -319,3 +322,47 @@ class AuthenticationError(BaseAppException):
             original_exception=original_exception,
         )
 
+
+
+class DataResidencyViolationError(BaseAppException):
+    """Raised when un-redacted PII reaches the LLM layer.
+
+    This is a CRITICAL error — it means raw PII (author names, email addresses,
+    phone numbers, or profile URLs) was detected in content that is about to be
+    sent to an external LLM provider, violating the zero-egress data residency
+    contract.
+
+    Args:
+        field: Name of the field that contains unredacted PII.
+        pattern: Description of the PII pattern detected (e.g. "email address").
+        details: Optional additional context for audit purposes.
+
+    Raises:
+        DataResidencyViolationError: Always raised by ``DataResidencyGuard.verify_clean()``.
+    """
+
+    def __init__(
+        self,
+        field: str,
+        pattern: str,
+        details: Optional[Dict[str, Any]] = None,
+    ):
+        """Initialise the violation error.
+
+        Args:
+            field: Content field containing unredacted PII (e.g. ``"author"``).
+            pattern: Human-readable description of detected PII (e.g. ``"email address"``).
+            details: Optional structured audit context.
+        """
+        self.field = field
+        self.pattern = pattern
+        super().__init__(
+            message=(
+                f"Data residency violation: field='{field}' contains unredacted PII "
+                f"({pattern}). Content must pass through DataResidencyGuard before "
+                f"reaching any LLM provider."
+            ),
+            error_code=ErrorCode.DATA_RESIDENCY_VIOLATION,
+            severity=ErrorSeverity.CRITICAL,
+            details={"field": field, "pattern": pattern, **(details or {})},
+        )

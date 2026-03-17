@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.connectors.base import ConnectorConfig
 from app.connectors.registry import ConnectorRegistry
+from app.core.data_residency import DataResidencyGuard
 from app.core.models import ContentItem, SourcePlatform
 from app.core.db_models import PlatformConfigDB
 from app.core.errors import ConnectorError, RateLimitError
@@ -167,6 +168,9 @@ class ContentIngestor:
 
         # Rate limiting state
         self.rate_limits: Dict[SourcePlatform, datetime] = {}
+
+        # Data residency guard — redacts PII from all items before normalisation
+        self._data_residency_guard = DataResidencyGuard()
 
         logger.info(
             f"ContentIngestor initialized: max_concurrent={max_concurrent_fetches}, "
@@ -325,6 +329,14 @@ class ContentIngestor:
 
             # Filter duplicates
             unique_items = self._filter_duplicates(result.items)
+
+            # Redact PII from every item before it leaves this layer.
+            # This enforces the zero-egress data residency contract — no raw
+            # author names, profile URLs, or contact details will reach any
+            # LLM provider.
+            unique_items = [
+                self._data_residency_guard.redact(item) for item in unique_items
+            ]
 
             # Update metrics
             duration = (datetime.utcnow() - start_time).total_seconds()

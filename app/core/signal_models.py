@@ -386,3 +386,34 @@ class SignalFilter(BaseModel):
             raise ValueError("max_action_score must be >= min_action_score")
         return v
 
+
+
+
+class TeamDigest(BaseModel):
+    """Summary of signal activity for a team over a time window.
+
+    Implements docs/competitive_analysis.md §5.5 — Team Collaboration.
+    Returned by ``GET /api/v1/signals/team`` to give team leaders an
+    at-a-glance view of their queue.
+
+    Attributes:
+        team_id: UUID of the team this digest covers.
+        period_start: Start of the digest window (UTC).
+        period_end: End of the digest window (UTC).
+        total_signals: Total number of signals in the team's queue.
+        by_status: Mapping of ``SignalStatus`` → count.
+        by_type: Mapping of ``SignalType`` → count.
+        unassigned_count: Number of signals with no assignee.
+        high_urgency_count: Number of signals with urgency_score ≥ 0.8.
+        generated_at: UTC timestamp when this digest was generated.
+    """
+
+    team_id: UUID
+    period_start: datetime
+    period_end: datetime
+    total_signals: int = 0
+    by_status: Dict[str, int] = Field(default_factory=dict)
+    by_type: Dict[str, int] = Field(default_factory=dict)
+    unassigned_count: int = 0
+    high_urgency_count: int = 0
+    generated_at: datetime = Field(default_factory=lambda: datetime.utcnow())

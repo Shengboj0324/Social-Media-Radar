@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional
 
+from app.core.config import settings
+from app.domain.inference_models import SignalType
 from app.llm.base_client import EnhancedBaseLLMClient
 from app.llm.config import DEFAULT_LLM_CONFIG, LLMServiceConfig, MODEL_REGISTRY, ModelConfig
 from app.llm.exceptions import LLMCircuitBreakerError, LLMError
@@ -27,6 +29,7 @@ logger = logging.getLogger(__name__)
 # Import providers conditionally
 try:
     from app.llm.providers import AnthropicLLMClient, OpenAILLMClient, VLLMClient
+    from app.llm.providers.ollama_provider import OllamaProvider
     PROVIDERS_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"Some LLM providers not available: {e}")
@@ -35,6 +38,7 @@ except ImportError as e:
     AnthropicLLMClient = None  # type: ignore[assignment,misc]
     OpenAILLMClient = None  # type: ignore[assignment,misc]
     VLLMClient = None  # type: ignore[assignment,misc]
+    OllamaProvider = None  # type: ignore[assignment,misc]
 
 
 class RoutingStrategy(str, Enum):
@@ -71,6 +75,26 @@ class ABTestConfig:
     enabled: bool = True
 
 
+# ---------------------------------------------------------------------------
+# Signal-type tier dispatch constants (competitive_analysis.md §5.3)
+# Defined at module level so they can be referenced in generator expressions
+# and by test code without instantiating LLMRouter.
+# ---------------------------------------------------------------------------
+
+#: High-stakes signal types that ALWAYS route to the frontier model.
+_FRONTIER_SIGNAL_TYPES = frozenset({
+    SignalType.CHURN_RISK,
+    SignalType.LEGAL_RISK,
+    SignalType.SECURITY_CONCERN,
+    SignalType.REPUTATION_RISK,
+})
+
+#: All other signal types — route to fine-tuned model when configured.
+_FINE_TUNED_SIGNAL_TYPES = frozenset(
+    st for st in SignalType if st not in _FRONTIER_SIGNAL_TYPES
+)
+
+
 class LLMRouter:
     """Intelligent router for LLM requests.
 
@@ -80,7 +104,12 @@ class LLMRouter:
     - Latency requirements
     - Provider availability
     - A/B testing configuration
+    - Signal-type tier (frontier vs. fine-tuned) per competitive_analysis.md §5.3
     """
+
+    # Expose module-level constants as class attributes for external access
+    _FRONTIER_SIGNALS: frozenset = _FRONTIER_SIGNAL_TYPES
+    _FINE_TUNED_SIGNALS: frozenset = _FINE_TUNED_SIGNAL_TYPES
 
     def __init__(
         self,
@@ -143,6 +172,13 @@ class LLMRouter:
             )
         elif model_config.provider == LLMProvider.VLLM:
             client = VLLMClient(
+                model_name=model_name,
+                service_config=self.service_config,
+            )
+        elif model_config.provider == LLMProvider.OLLAMA:
+            if OllamaProvider is None:
+                raise ValueError("OllamaProvider is not available (import error)")
+            client = OllamaProvider(
                 model_name=model_name,
                 service_config=self.service_config,
             )
@@ -494,6 +530,90 @@ class LLMRouter:
                 health[model_name] = False
 
         return health
+
+    # ------------------------------------------------------------------
+    # Tiered signal-type routing (competitive_analysis.md §5.3)
+    # ------------------------------------------------------------------
+
+    def _model_for_signal_type(self, signal_type: Optional[SignalType]) -> str:
+        """Return the model name to use for a given signal type.
+
+        High-stakes signals (CHURN_RISK, LEGAL_RISK, SECURITY_CONCERN,
+        REPUTATION_RISK) always route to the frontier model.  All other
+        types route to ``settings.fine_tuned_model_id`` when configured,
+        falling back to the frontier model otherwise.
+
+        Args:
+            signal_type: The top-candidate signal type from retrieval.
+                Use ``None`` to unconditionally select the frontier model.
+
+        Returns:
+            Model name string suitable for passing to ``_get_client()``.
+        """
+        if signal_type is None or signal_type in self._FRONTIER_SIGNALS:
+            return self.service_config.primary_model
+
+        # Non-frontier signal — prefer fine-tuned if configured
+        fine_tuned = getattr(settings, "fine_tuned_model_id", None)
+        if fine_tuned:
+            return fine_tuned
+
+        return self.service_config.primary_model
+
+    async def generate_for_signal(
+        self,
+        signal_type: Optional[SignalType],
+        messages: List[LLMMessage],
+        temperature: float = 0.3,
+        max_tokens: Optional[int] = None,
+        **kwargs,
+    ) -> str:
+        """Generate text using the model tier appropriate for ``signal_type``.
+
+        This is the primary entry point used by ``LLMAdjudicator.adjudicate()``.
+        It selects either the frontier model or the configured fine-tuned model
+        based on the signal type tier, then delegates to the selected client's
+        ``generate_simple()`` method.
+
+        High-stakes signal types (CHURN_RISK, LEGAL_RISK, SECURITY_CONCERN,
+        REPUTATION_RISK) always route to the frontier model, regardless of
+        whether a fine-tuned model is configured.
+
+        Args:
+            signal_type: Top-candidate signal type from retrieval stage.
+                Pass ``None`` to unconditionally route to the frontier model.
+            messages: Conversation turns to pass to the LLM.
+            temperature: Sampling temperature.  Defaults to 0.3 for
+                consistent classification output.
+            max_tokens: Optional maximum tokens to generate.
+            **kwargs: Additional provider-specific parameters.
+
+        Returns:
+            Raw string content from the LLM response.
+
+        Raises:
+            LLMError: Any LLM provider error propagated from the client.
+        """
+        model_name = self._model_for_signal_type(signal_type)
+        tier = (
+            "frontier"
+            if signal_type is None or signal_type in self._FRONTIER_SIGNALS
+            else "fine_tuned"
+        )
+        logger.debug(
+            "generate_for_signal: signal_type=%s tier=%s model=%s",
+            signal_type,
+            tier,
+            model_name,
+        )
+        client = self._get_client(model_name)
+        return await client.generate_simple(
+            prompt=messages[-1].content if messages else "",
+            messages=messages[:-1] if len(messages) > 1 else None,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **kwargs,
+        )
 
 
 # Global router instance

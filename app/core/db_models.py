@@ -336,6 +336,19 @@ class ActionableSignalDB(Base):
         index=True,
     )
 
+    # Team collaboration (competitive_analysis.md §5.5)
+    team_id: Mapped[Optional[UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+        index=True,
+        comment="UUID of the team this signal is scoped to",
+    )
+    assigned_role: Mapped[Optional[str]] = mapped_column(
+        String(50),
+        nullable=True,
+        comment="TeamRole value of the user who last assigned this signal",
+    )
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

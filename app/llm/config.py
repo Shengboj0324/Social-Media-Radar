@@ -167,6 +167,45 @@ MODEL_REGISTRY: Dict[str, ModelConfig] = {
         quality_tier=2,
         latency_tier=2,
     ),
+    # ---------------------------------------------------------------------------
+    # Ollama local models (competitive_analysis.md §5.2 — Offline LLM Provider)
+    # Cost is ~$0 for on-device compute; pricing set to symbolic $0.01 for internal
+    # cost accounting so budget logic still functions correctly.
+    # ---------------------------------------------------------------------------
+    "llama3.1:8b": ModelConfig(
+        name="llama3.1:8b",
+        provider=LLMProvider.OLLAMA,
+        pricing=ModelPricing(
+            input_cost_per_1m=0.01,
+            output_cost_per_1m=0.01,
+            context_window=128_000,
+            supports_json_mode=False,
+        ),
+        quality_tier=3,
+        latency_tier=3,
+    ),
+    "llama3.1:70b": ModelConfig(
+        name="llama3.1:70b",
+        provider=LLMProvider.OLLAMA,
+        pricing=ModelPricing(
+            input_cost_per_1m=0.01,
+            output_cost_per_1m=0.01,
+            context_window=128_000,
+        ),
+        quality_tier=2,
+        latency_tier=4,
+    ),
+    "mistral:7b": ModelConfig(
+        name="mistral:7b",
+        provider=LLMProvider.OLLAMA,
+        pricing=ModelPricing(
+            input_cost_per_1m=0.01,
+            output_cost_per_1m=0.01,
+            context_window=32_000,
+        ),
+        quality_tier=3,
+        latency_tier=2,
+    ),
 }
 
 

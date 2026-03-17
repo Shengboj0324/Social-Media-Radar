@@ -60,6 +60,28 @@ class Settings(BaseSettings):
     local_model_path: Optional[str] = None
     vllm_endpoint: Optional[str] = None
 
+    # Ollama (offline local LLM) — competitive_analysis.md §5.2
+    local_llm_url: Optional[str] = Field(
+        default=None,
+        description=(
+            "Base URL for the Ollama REST API (e.g. http://localhost:11434). "
+            "When set, LLMRouter will prefer OllamaProvider for non-frontier signals."
+        ),
+    )
+    local_llm_model: str = Field(
+        default="llama3.1:8b",
+        description="Ollama model tag to use for inference and embeddings.",
+    )
+
+    # Fine-tuned model — competitive_analysis.md §5.3 / Step 3
+    fine_tuned_model_id: Optional[str] = Field(
+        default=None,
+        description=(
+            "OpenAI fine-tuned model ID (e.g. ft:gpt-4o-mini-2024-07-18:...). "
+            "When set, LLMRouter routes non-frontier signal types to this model."
+        ),
+    )
+
     # Security
     secret_key: str = Field(default="change-this-in-production")
     encryption_key: str = Field(default="change-this-32-byte-key-base64==")

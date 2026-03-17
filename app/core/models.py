@@ -171,3 +171,47 @@ class DigestResponse(BaseModel):
     total_items: int
     summary: Optional[str] = None
 
+
+
+class TeamRole(str, Enum):
+    """Role-based access levels for team signal collaboration.
+
+    Implements docs/competitive_analysis.md §5.5 — Team Collaboration.
+
+    Roles are ordered by privilege (VIEWER < ANALYST < MANAGER).  The
+    ordering is used by ``has_role_at_least()`` to enforce access gates.
+
+    - ``VIEWER``  — read-only access; can view signals but not act on them.
+    - ``ANALYST`` — can dismiss signals; cannot assign or manage team members.
+    - ``MANAGER`` — full access including signal assignment and team digests.
+    """
+
+    VIEWER = "viewer"
+    ANALYST = "analyst"
+    MANAGER = "manager"
+
+    @classmethod
+    def privilege_level(cls, role: "TeamRole") -> int:
+        """Return a numeric privilege level for comparison (higher = more access).
+
+        Args:
+            role: The ``TeamRole`` to evaluate.
+
+        Returns:
+            Integer privilege level: VIEWER=1, ANALYST=2, MANAGER=3.
+        """
+        _levels = {cls.VIEWER: 1, cls.ANALYST: 2, cls.MANAGER: 3}
+        return _levels[role]
+
+    @classmethod
+    def has_role_at_least(cls, user_role: "TeamRole", required: "TeamRole") -> bool:
+        """Return ``True`` if ``user_role`` meets or exceeds ``required``.
+
+        Args:
+            user_role: The role held by the requesting user.
+            required: The minimum role required to access a resource.
+
+        Returns:
+            ``True`` if ``user_role`` privilege ≥ ``required`` privilege.
+        """
+        return cls.privilege_level(user_role) >= cls.privilege_level(required)

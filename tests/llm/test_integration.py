@@ -443,3 +443,283 @@ class TestReliabilityIntegration:
             )
 
 
+
+
+# ---------------------------------------------------------------------------
+# OllamaProvider unit tests (Step 2 — competitive_analysis.md §5.2)
+# All HTTP calls are mocked — no live Ollama instance required.
+# ---------------------------------------------------------------------------
+
+from unittest.mock import AsyncMock, MagicMock, patch
+from app.llm.providers.ollama_provider import OllamaProvider, map_ollama_error
+from app.llm.models import LLMProvider, FinishReason
+from app.llm.exceptions import LLMServiceUnavailableError, LLMTimeoutError
+import aiohttp
+
+
+def _make_mock_response(json_data: dict, status: int = 200):
+    """Build a fully mocked aiohttp ClientResponse context manager."""
+    mock_resp = AsyncMock()
+    mock_resp.status = status
+    mock_resp.json = AsyncMock(return_value=json_data)
+    mock_resp.raise_for_status = MagicMock()
+    if status >= 400:
+        mock_resp.raise_for_status.side_effect = aiohttp.ClientResponseError(
+            request_info=MagicMock(), history=(), status=status
+        )
+    # Context manager support for `async with session.post(...) as resp:`
+    cm = AsyncMock()
+    cm.__aenter__ = AsyncMock(return_value=mock_resp)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    return cm, mock_resp
+
+
+def _make_mock_session(post_cm):
+    """Build a fully mocked aiohttp ClientSession context manager."""
+    mock_session = AsyncMock()
+    mock_session.post = MagicMock(return_value=post_cm)
+    session_cm = AsyncMock()
+    session_cm.__aenter__ = AsyncMock(return_value=mock_session)
+    session_cm.__aexit__ = AsyncMock(return_value=False)
+    return session_cm
+
+
+class TestOllamaProviderUnit:
+    """Unit tests for OllamaProvider using mocked HTTP — no live Ollama needed."""
+
+    @pytest.mark.asyncio
+    async def test_init_default_model(self):
+        """OllamaProvider initialises with default llama3.1:8b model."""
+        provider = OllamaProvider()
+        assert provider.model_config.name == "llama3.1:8b"
+        assert provider.provider == LLMProvider.OLLAMA
+
+    @pytest.mark.asyncio
+    async def test_init_custom_base_url(self):
+        """OllamaProvider respects a custom base_url."""
+        provider = OllamaProvider(base_url="http://custom-host:11434")
+        assert provider.base_url == "http://custom-host:11434"
+
+    def test_init_unknown_model_raises(self):
+        """OllamaProvider raises ValueError for models not in MODEL_REGISTRY."""
+        with pytest.raises(ValueError, match="Unknown Ollama model"):
+            OllamaProvider(model_name="does-not-exist:latest")
+
+    def test_messages_to_prompt_formats_correctly(self):
+        """_messages_to_prompt serialises messages with role labels."""
+        msgs = [
+            LLMMessage(role="system", content="You are helpful."),
+            LLMMessage(role="user", content="Hello!"),
+        ]
+        prompt = OllamaProvider._messages_to_prompt(msgs)
+        assert "[SYSTEM]" in prompt
+        assert "You are helpful." in prompt
+        assert "[USER]" in prompt
+        assert "Hello!" in prompt
+
+    @pytest.mark.asyncio
+    async def test_generate_impl_happy_path(self):
+        """_generate_impl returns an LLMResponse with content from mock Ollama."""
+        generate_json = {
+            "response": "This is the LLM reply.",
+            "prompt_eval_count": 20,
+            "eval_count": 8,
+        }
+        post_cm, _ = _make_mock_response(generate_json)
+        session_cm = _make_mock_session(post_cm)
+
+        provider = OllamaProvider(base_url="http://localhost:11434")
+
+        with patch("aiohttp.ClientSession", return_value=session_cm):
+            msgs = [LLMMessage(role="user", content="Test prompt")]
+            response = await provider._generate_impl(msgs, temperature=0.5, max_tokens=50)
+
+        assert response.content == "This is the LLM reply."
+        assert response.provider == LLMProvider.OLLAMA
+        assert response.finish_reason == FinishReason.STOP
+        assert response.usage.prompt_tokens == 20
+        assert response.usage.completion_tokens == 8
+
+    @pytest.mark.asyncio
+    async def test_generate_impl_connection_error_raises(self):
+        """_generate_impl converts aiohttp connection errors to LLMServiceUnavailableError."""
+        provider = OllamaProvider(base_url="http://localhost:11434")
+
+        with patch("aiohttp.ClientSession") as MockSession:
+            session_cm = AsyncMock()
+            session_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
+            session_cm.__aexit__ = AsyncMock(return_value=False)
+            # Make post() raise a connection error
+            session_cm.__aenter__.return_value.post = MagicMock(
+                side_effect=aiohttp.ClientConnectionError("refused")
+            )
+            MockSession.return_value = session_cm
+
+            msgs = [LLMMessage(role="user", content="Hello")]
+            with pytest.raises(LLMServiceUnavailableError):
+                await provider._generate_impl(msgs, temperature=0.7, max_tokens=None)
+
+    @pytest.mark.asyncio
+    async def test_embed_impl_returns_embedding(self):
+        """_embed_impl returns an EmbeddingResponse with the mock embedding vector."""
+        embed_json = {"embedding": [0.1, 0.2, 0.3]}
+        post_cm, _ = _make_mock_response(embed_json)
+        session_cm = _make_mock_session(post_cm)
+
+        provider = OllamaProvider(base_url="http://localhost:11434")
+
+        with patch("aiohttp.ClientSession", return_value=session_cm):
+            results = await provider._embed_impl(["hello world"])
+
+        assert len(results) == 1
+        assert results[0].embedding == [0.1, 0.2, 0.3]
+
+    def test_map_ollama_error_timeout(self):
+        """map_ollama_error maps ClientTimeout to LLMTimeoutError."""
+        exc = aiohttp.ClientTimeout()
+        mapped = map_ollama_error(exc, "ollama", "llama3.1:8b")
+        assert isinstance(mapped, LLMTimeoutError)
+
+    def test_map_ollama_error_connection(self):
+        """map_ollama_error maps ClientConnectionError to LLMServiceUnavailableError."""
+        exc = aiohttp.ClientConnectionError("refused")
+        mapped = map_ollama_error(exc, "ollama", "llama3.1:8b")
+        assert isinstance(mapped, LLMServiceUnavailableError)
+
+
+# ---------------------------------------------------------------------------
+# Signal-type-tiered LLM dispatch tests (Step 3 — competitive_analysis.md §5.3)
+# ---------------------------------------------------------------------------
+
+from app.core.config import settings
+from app.llm.router import LLMRouter
+from app.domain.inference_models import SignalType
+
+
+class TestSignalTypeTieredRouting:
+    """Unit tests for LLMRouter.generate_for_signal() tiered dispatch."""
+
+    # --- _model_for_signal_type ---
+
+    def test_frontier_signal_types_map_to_primary_model(self):
+        """High-stakes signal types always route to the primary/frontier model."""
+        router = LLMRouter.__new__(LLMRouter)
+        router.service_config = type("SC", (), {"primary_model": "gpt-4o"})()
+
+        frontier_types = [
+            SignalType.CHURN_RISK,
+            SignalType.LEGAL_RISK,
+            SignalType.SECURITY_CONCERN,
+            SignalType.REPUTATION_RISK,
+        ]
+        for st in frontier_types:
+            model = router._model_for_signal_type(st)
+            assert model == "gpt-4o", f"{st} should route to frontier, got {model}"
+
+    def test_none_signal_type_maps_to_primary_model(self):
+        """None signal type (unknown) defaults to frontier model."""
+        router = LLMRouter.__new__(LLMRouter)
+        router.service_config = type("SC", (), {"primary_model": "gpt-4o"})()
+        assert router._model_for_signal_type(None) == "gpt-4o"
+
+    def test_non_frontier_type_uses_fine_tuned_when_configured(self, monkeypatch):
+        """Non-frontier signal types route to fine_tuned_model_id when set."""
+        from app.core.config import settings
+        monkeypatch.setattr(settings, "fine_tuned_model_id", "ft:gpt-4o-mini:test:v1", raising=False)
+
+        router = LLMRouter.__new__(LLMRouter)
+        router.service_config = type("SC", (), {"primary_model": "gpt-4o"})()
+
+        non_frontier_types = [
+            SignalType.FEATURE_REQUEST,
+            SignalType.BUG_REPORT,
+            SignalType.PRAISE,
+            SignalType.SUPPORT_REQUEST,
+            SignalType.COMPETITOR_MENTION,
+        ]
+        for st in non_frontier_types:
+            model = router._model_for_signal_type(st)
+            assert model == "ft:gpt-4o-mini:test:v1", \
+                f"{st} should route to fine-tuned, got {model}"
+
+    def test_non_frontier_type_falls_back_to_frontier_when_no_fine_tuned(self, monkeypatch):
+        """Non-frontier types fall back to frontier when fine_tuned_model_id is unset."""
+        from app.core.config import settings
+        monkeypatch.setattr(settings, "fine_tuned_model_id", None, raising=False)
+
+        router = LLMRouter.__new__(LLMRouter)
+        router.service_config = type("SC", (), {"primary_model": "gpt-4o"})()
+
+        model = router._model_for_signal_type(SignalType.FEATURE_REQUEST)
+        assert model == "gpt-4o"
+
+    def test_all_18_signal_types_are_covered_by_dispatch(self):
+        """Every SignalType is in either _FRONTIER_SIGNALS or _FINE_TUNED_SIGNALS."""
+        all_types = set(SignalType)
+        covered = LLMRouter._FRONTIER_SIGNALS | LLMRouter._FINE_TUNED_SIGNALS
+        uncovered = all_types - covered
+        assert not uncovered, f"Signal types not in dispatch table: {uncovered}"
+
+    def test_frontier_and_fine_tuned_sets_are_disjoint(self):
+        """No signal type belongs to both frontier and fine_tuned tiers."""
+        overlap = LLMRouter._FRONTIER_SIGNALS & LLMRouter._FINE_TUNED_SIGNALS
+        assert not overlap, f"Overlap between tier sets: {overlap}"
+
+    @pytest.mark.asyncio
+    async def test_generate_for_signal_calls_generate_simple_with_correct_client(
+        self, monkeypatch
+    ):
+        """generate_for_signal selects the frontier model for CHURN_RISK."""
+        router = LLMRouter.__new__(LLMRouter)
+        router.service_config = type("SC", (), {"primary_model": "gpt-4o"})()
+        router._clients = {}
+        router._lock = asyncio.Lock()
+
+        captured_model = []
+
+        def mock_get_client(model_name: str):
+            captured_model.append(model_name)
+            client = AsyncMock()
+            client.generate_simple = AsyncMock(return_value="mocked response")
+            return client
+
+        router._get_client = mock_get_client
+        monkeypatch.setattr(settings, "fine_tuned_model_id", "ft:gpt-4o-mini:test:v1", raising=False)
+
+        msgs = [LLMMessage(role="user", content="I am leaving.")]
+        result = await router.generate_for_signal(
+            signal_type=SignalType.CHURN_RISK, messages=msgs
+        )
+
+        assert result == "mocked response"
+        # CHURN_RISK must always route to frontier
+        assert captured_model[0] == "gpt-4o", \
+            f"CHURN_RISK should route to gpt-4o, got {captured_model[0]}"
+
+    @pytest.mark.asyncio
+    async def test_generate_for_signal_uses_fine_tuned_for_feature_request(
+        self, monkeypatch
+    ):
+        """generate_for_signal selects fine-tuned model for FEATURE_REQUEST."""
+        router = LLMRouter.__new__(LLMRouter)
+        router.service_config = type("SC", (), {"primary_model": "gpt-4o"})()
+        router._clients = {}
+        router._lock = asyncio.Lock()
+
+        captured_model = []
+
+        def mock_get_client(model_name: str):
+            captured_model.append(model_name)
+            client = AsyncMock()
+            client.generate_simple = AsyncMock(return_value="feature response")
+            return client
+
+        router._get_client = mock_get_client
+        monkeypatch.setattr(settings, "fine_tuned_model_id", "ft:gpt-4o-mini:prod:v2", raising=False)
+
+        msgs = [LLMMessage(role="user", content="I'd love dark mode.")]
+        await router.generate_for_signal(
+            signal_type=SignalType.FEATURE_REQUEST, messages=msgs
+        )
+        assert captured_model[0] == "ft:gpt-4o-mini:prod:v2", \
+            f"FEATURE_REQUEST should route to fine-tuned, got {captured_model[0]}"
