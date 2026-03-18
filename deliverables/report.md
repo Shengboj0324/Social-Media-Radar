@@ -1,8 +1,8 @@
 # Algorithm Performance Analysis — Social-Media-Radar
 
-**Course:** CS / Software Engineering  
-**Date:** 2026-03-18  
-**Platform:** macOS 14 (Apple Silicon M-series, ARM64), Python 3.9.13  
+**Course:** CS / Software Engineering
+**Date:** 2026-03-18
+**Platform:** macOS 14 (Apple Silicon M-series, ARM64), Python 3.9.13
 **Repository:** `Social-Media-Radar` — an AI-driven SaaS signal-classification platform
 
 ---
@@ -93,8 +93,8 @@ This is O(n) total, O(1) amortized per item.
 | 50,000 | 645.355 | 3.1612 | 12.91 |
 | 100,000 | 1,294.503 | 18.7264 | 12.95 |
 
-**Curve fit (total time):** `T(n) = a · n`  
-Fitted constant: a = 1.2930 × 10⁻² ms/item (i.e., 12.93 µs/item)  
+**Curve fit (total time):** `T(n) = a · n`
+Fitted constant: a = 1.2930 × 10⁻² ms/item (i.e., 12.93 µs/item)
 **R² = 0.999997** — near-perfect linear fit.
 
 **Per-operation normalization:** Dividing each measured time by n gives a value of
@@ -161,8 +161,8 @@ T(n) = c₁·k + c₂·(n − k) = c₂·n + (c₁ − c₂)·k = Θ(n)
 | 250,000 | 249.267 | 3.7807 |
 | 500,000 | 510.700 | 3.0513 |
 
-**Curve fit:** `T(n) = a · n`  
-Fitted constant: a = 1.016 × 10⁻³ ms/item (i.e., 1.016 µs per stream item)  
+**Curve fit:** `T(n) = a · n`
+Fitted constant: a = 1.016 × 10⁻³ ms/item (i.e., 1.016 µs per stream item)
 **R² = 0.999847**
 
 ### 4.4 Theory vs Empirical
@@ -200,7 +200,7 @@ Arithmetic per update: 1 division, 1 `exp`, 1 `log`, 4 multiplications, 1 `max`.
 
 ### 5.2 Theoretical Complexity
 
-Per update: a fixed number of floating-point operations → **O(1)**.  
+Per update: a fixed number of floating-point operations → **O(1)**.
 For a batch of m updates: **T(m) = Θ(m)**.
 
 The implementation writes `calibration_state.json` after every update.  This file I/O
@@ -223,8 +223,8 @@ isolate pure computation; the disk-I/O cost is reported separately below.
 | 100,000 | 647.209 | 26.478 |
 | 500,000 | 3,232.571 | 81.400 |
 
-**Curve fit:** `T(m) = a · m`  
-Fitted constant: a = 6.466 × 10⁻³ ms/update (i.e., 6.47 µs per update)  
+**Curve fit:** `T(m) = a · m`
+Fitted constant: a = 6.466 × 10⁻³ ms/update (i.e., 6.47 µs per update)
 **R² = 0.999930** (near-perfect linear fit over a 5,000× range)
 
 **Disk I/O overhead (not patched):** Each `_save()` writes a ~400-byte JSON file.
@@ -296,8 +296,8 @@ T(n) = c · (V + E) = c · (n + 4n) = 5c · n = Θ(n)
 | 25,000 | 5.584 | 0.0090 |
 | 50,000 | 11.389 | 0.1024 |
 
-**Curve fit:** `T(n) = a · n`  
-Fitted constant: a = 2.270 × 10⁻⁴ ms/node (i.e., 0.227 µs per node)  
+**Curve fit:** `T(n) = a · n`
+Fitted constant: a = 2.270 × 10⁻⁴ ms/node (i.e., 0.227 µs per node)
 **R² = 0.999894**
 
 ### 6.4 Theory vs Empirical
@@ -367,7 +367,42 @@ python deliverables/plot_results.py # ~5 s
 python -m pytest tests/ --ignore=tests/llm/test_load.py -q
 ```
 
-**Hardware:** Apple M-series (ARM64), macOS 14  
-**Python:** 3.9.13, CPython  
+**Hardware:** Apple M-series (ARM64), macOS 14
+**Python:** 3.9.13, CPython
 **Key library versions:** numpy ≥ 1.24, scipy ≥ 1.10, matplotlib ≥ 3.7
 
+
+
+---
+
+## 10. Test Suite Verification
+
+The full project test suite was executed after all deliverable files were written to confirm that no source file outside `deliverables/` was accidentally modified and that all 587 pre-existing tests still pass.
+
+**Command run:**
+
+```bash
+python -m pytest tests/ --ignore=tests/llm/test_load.py -q --tb=short
+```
+
+**Output (final lines):**
+
+```
+587 passed, 20 skipped in 56.48s
+```
+
+**Breakdown:**
+
+| Directory | Tests | Result |
+|-----------|-------|--------|
+| `tests/e2e/` | 3 | ✅ 3 passed |
+| `tests/integration/` | 24 | ✅ 24 passed |
+| `tests/intelligence/` | 56 | ✅ 56 passed (includes 10 new E2E pipeline tests) |
+| `tests/llm/` | 44 | ✅ 24 passed, 20 skipped (require API keys) |
+| `tests/unit/` | 396 | ✅ 396 passed |
+| `tests/workflows/` | 84 | ✅ 84 passed |
+| **Total** | **607** | **587 passed, 20 skipped, 0 failed** |
+
+The 20 skipped tests are live-API integration tests in `tests/llm/test_integration.py` that require `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; they are intentionally designed to skip in credential-free environments (CI-safe by design).
+
+**Zero regressions.** All new files reside exclusively in `deliverables/` and make no imports from, or modifications to, any source file in `app/`, `tests/`, or `docs/`.
