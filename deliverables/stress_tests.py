@@ -18,6 +18,7 @@ Usage:
 import math
 import sys
 import tempfile
+import threading
 from collections import deque
 from pathlib import Path
 from unittest.mock import patch
@@ -181,6 +182,120 @@ def test_bfs_disconnected():
     return _verdict(len(visited) == half and in_A,
                     "BFS disconnected graph: only source component visited", detail)
 
+# ── 5a. Calibrator: large batch (m=10⁶ updates) ───────────────────────────────
+def test_calibrator_large_batch():
+    """m=1,000,000 gradient updates in one session with _save patched.
+    All T values must remain in [T_MIN, T_MAX] and be finite throughout.
+    """
+    import numpy as np
+    rng = np.random.default_rng(0)
+    m = 1_000_000
+    probs  = rng.uniform(0.01, 0.99, m).tolist()
+    labels = rng.integers(0, 2, m).astype(bool).tolist()
+
+    with tempfile.TemporaryDirectory() as td:
+        c = ConfidenceCalibrator(state_path=Path(td) / "s.json")
+        with patch.object(c, "_save"):
+            for p, y in zip(probs, labels):
+                c.update(SignalType.FEATURE_REQUEST, predicted_prob=p, true_label=y)
+
+        t = c._scalars.get(SignalType.FEATURE_REQUEST.value, 1.0)
+        ok = math.isfinite(t) and _T_MIN <= t <= 100.0
+        detail = f"m={m:,}  T={t:.6f}  finite={math.isfinite(t)}  in_bounds={_T_MIN}≤{t:.4f}≤100.0"
+    return _verdict(ok, "Calibrator large batch (m=10⁶): T finite and in [T_MIN, T_MAX]", detail)
+
+
+# ── 5b. Calibrator: all 18 SignalTypes updated simultaneously ─────────────────
+def test_calibrator_all_signal_types():
+    """Update every SignalType once and verify all scalars are finite and bounded."""
+    from app.domain.inference_models import SignalType as ST
+    all_types = list(ST)
+    with tempfile.TemporaryDirectory() as td:
+        c = ConfidenceCalibrator(state_path=Path(td) / "s.json")
+        with patch.object(c, "_save"):
+            for st in all_types:
+                c.update(st, predicted_prob=0.75, true_label=True)
+
+        bad = [
+            st for st in all_types
+            if not math.isfinite(c._scalars.get(st.value, 1.0))
+            or not (_T_MIN <= c._scalars.get(st.value, 1.0) <= 100.0)
+        ]
+        ok = len(bad) == 0
+        detail = (f"updated={len(all_types)} types  bad={len(bad)}"
+                  + (f"  failed={[s.value for s in bad]}" if bad else ""))
+    return _verdict(ok, "Calibrator all-18 SignalTypes: all T finite and bounded", detail)
+
+
+# ── 5c. Calibrator: alternating extreme inputs ────────────────────────────────
+def test_calibrator_alternating_extremes():
+    """10,000 updates alternating p=1e-9 and p=1-1e-9 (will be clamped).
+    T must stay finite and in [T_MIN, T_MAX] throughout.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        c = ConfidenceCalibrator(state_path=Path(td) / "s.json")
+        with patch.object(c, "_save"):
+            for i in range(10_000):
+                p = 1e-9 if i % 2 == 0 else 1 - 1e-9
+                label = (i % 3 == 0)
+                c.update(SignalType.CHURN_RISK, predicted_prob=p, true_label=label)
+
+        t = c._scalars.get(SignalType.CHURN_RISK.value, 1.0)
+        ok = math.isfinite(t) and _T_MIN <= t <= 100.0
+        detail = (f"10,000 alternating extremes  T={t:.6f}  "
+                  f"finite={math.isfinite(t)}  in_bounds={ok}")
+    return _verdict(ok, "Calibrator alternating extremes (10K updates): T bounded", detail)
+
+
+# ── 5d. Calibrator: concurrent thread safety ──────────────────────────────────
+def test_calibrator_thread_safety():
+    """Launch 8 threads each performing 500 updates on different SignalTypes.
+    Assert: no exception raised, no T outside [T_MIN, T_MAX], no NaN/Inf.
+    Note: Python's GIL makes dict updates atomic at the bytecode level, but the
+    read-modify-write sequence in update() is NOT atomic.  The test verifies that
+    the safety clamps prevent T from escaping valid bounds even under races.
+    """
+    import numpy as np
+    N_THREADS, N_UPDATES = 8, 500
+    signal_types = [
+        SignalType.FEATURE_REQUEST, SignalType.BUG_REPORT, SignalType.CHURN_RISK,
+        SignalType.PRAISE, SignalType.COMPETITOR_MENTION, SignalType.LEGAL_RISK,
+        SignalType.SECURITY_CONCERN, SignalType.REPUTATION_RISK,
+    ]
+    errors = []
+
+    with tempfile.TemporaryDirectory() as td:
+        c = ConfidenceCalibrator(state_path=Path(td) / "s.json")
+        rng = np.random.default_rng(7)
+        probs  = rng.uniform(0.01, 0.99, N_THREADS * N_UPDATES).tolist()
+        labels = rng.integers(0, 2, N_THREADS * N_UPDATES).astype(bool).tolist()
+
+        def worker(thread_idx: int):
+            st = signal_types[thread_idx]
+            base = thread_idx * N_UPDATES
+            try:
+                with patch.object(c, "_save"):
+                    for i in range(N_UPDATES):
+                        c.update(st, predicted_prob=probs[base + i],
+                                 true_label=labels[base + i])
+            except Exception as exc:
+                errors.append(f"thread-{thread_idx}: {exc}")
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(N_THREADS)]
+        for t in threads: t.start()
+        for t in threads: t.join()
+
+        bad_scalars = [
+            (k, v) for k, v in c._scalars.items()
+            if not math.isfinite(v) or not (_T_MIN <= v <= 100.0)
+        ]
+
+    ok = len(errors) == 0 and len(bad_scalars) == 0
+    detail = (f"threads={N_THREADS}  updates_each={N_UPDATES}  "
+              f"errors={len(errors)}  bad_scalars={len(bad_scalars)}")
+    return _verdict(ok, "Calibrator concurrent threads: no exceptions, all T bounded", detail)
+
+
 # ── main ──────────────────────────────────────────────────────────────────────
 def main():
     print("=" * 62)
@@ -195,6 +310,10 @@ def main():
         ("3a", test_calibrator_boundary_low),
         ("3b", test_calibrator_boundary_high),
         ("4 ", test_bfs_disconnected),
+        ("5a", test_calibrator_large_batch),
+        ("5b", test_calibrator_all_signal_types),
+        ("5c", test_calibrator_alternating_extremes),
+        ("5d", test_calibrator_thread_safety),
     ]
 
     results = []

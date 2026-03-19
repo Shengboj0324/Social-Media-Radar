@@ -179,8 +179,12 @@ class DQNNetwork:
         # Auto-initialize networks (requires torch)
         try:
             self.initialize()
-        except Exception:
-            pass  # torch not available; networks remain None
+        except (ImportError, RuntimeError) as exc:
+            logger.debug(
+                "DQNAgent: deferred network initialisation (torch unavailable or "
+                "misconfigured): %s",
+                exc,
+            )
 
     def initialize(self) -> None:
         """Initialize Q-network and target network."""
@@ -606,8 +610,12 @@ class PPOAgent:
         # Auto-initialize networks (requires torch)
         try:
             self.initialize()
-        except Exception:
-            pass  # torch not available; networks remain None
+        except (ImportError, RuntimeError) as exc:
+            logger.debug(
+                "PPOAgent: deferred network initialisation (torch unavailable or "
+                "misconfigured): %s",
+                exc,
+            )
 
     def _content_id_to_action_idx(self, content_id: str) -> int:
         """Convert content ID to deterministic action index.

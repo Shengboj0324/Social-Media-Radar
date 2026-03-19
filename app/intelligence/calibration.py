@@ -347,8 +347,17 @@ _DEFAULT_STATE_PATH: Path = Path("training/calibration_state.json")
 #: Minimum allowed temperature scalar (prevents division by zero / collapse).
 _T_MIN: float = 0.1
 
+#: Maximum allowed temperature scalar (prevents unbounded growth after many
+#: incorrect high-confidence predictions).
+_T_MAX: float = 100.0
+
 #: Learning rate for the single-step gradient update in ``update()``.
 _LR: float = 0.01
+
+#: Epsilon used to clamp ``predicted_prob`` away from 0 and 1 before any
+#: ``log`` or ``exp`` operation.  Inputs must be validated to lie in [0, 1]
+#: before this clamp is applied.
+_PROB_EPS: float = 1e-7
 
 
 class ConfidenceCalibrator:
@@ -398,6 +407,11 @@ class ConfidenceCalibrator:
         temperature for ``signal_type``.  When ``T == 1.0`` (default), the
         result is identical to the plain logistic sigmoid.
 
+        Non-finite ``raw_logit`` values (NaN, ±Inf) are handled gracefully:
+        NaN and ±Inf inputs are logged and produce ``0.5`` (maximum uncertainty),
+        while exponent overflow in the sigmoid (very large negative logits with
+        a very small T) is clamped to ``0.0``.
+
         Args:
             raw_logit: Log-odds score from the LLM or upstream model.
                 Typically derived from the raw confidence probability via
@@ -407,14 +421,28 @@ class ConfidenceCalibrator:
         Returns:
             Calibrated probability in ``[0.0, 1.0]``.
         """
-        t: float = max(_T_MIN, self._scalars.get(signal_type.value, 1.0))
-        return 1.0 / (1.0 + math.exp(-raw_logit / t))
+        if not math.isfinite(raw_logit):
+            logger.warning(
+                "ConfidenceCalibrator.calibrate: non-finite raw_logit=%r for "
+                "signal_type=%s; returning 0.5 (maximum uncertainty)",
+                raw_logit,
+                signal_type.value,
+            )
+            return 0.5
+        t: float = max(_T_MIN, min(_T_MAX, self._scalars.get(signal_type.value, 1.0)))
+        try:
+            p = 1.0 / (1.0 + math.exp(-raw_logit / t))
+        except OverflowError:
+            # -raw_logit / t >> 709 → exp overflows → sigmoid → 0.0
+            p = 0.0
+        return float(np.clip(p, 0.0, 1.0))
 
     def update(
         self,
         signal_type: SignalType,
         predicted_prob: float,
         true_label: bool,
+        lr: Optional[float] = None,
     ) -> None:
         """Perform one gradient step on ``T`` using binary cross-entropy loss.
 
@@ -422,29 +450,57 @@ class ConfidenceCalibrator:
         ``dL/dT = (p_cal - y) * (−logit / T²)``
         where ``p_cal = sigmoid(logit / T)`` and ``y ∈ {0, 1}``.
 
-        The scalar is updated as ``T ← max(T_MIN, T − lr * dL/dT)`` and
-        immediately persisted to ``state_path``.
+        The scalar is updated as
+        ``T ← clamp(T − lr * dL/dT, T_MIN, T_MAX)``
+        and immediately persisted to ``state_path``.
 
         Args:
             signal_type: Signal type whose temperature to update.
             predicted_prob: Raw predicted probability (before calibration).
+                Must be a finite float in ``[0.0, 1.0]``; values outside this
+                range raise ``ValueError``.
             true_label: ``True`` if the prediction was correct.
+            lr: Optional per-call learning rate override.  When provided it
+                takes precedence over ``self._lr`` for this update only.
+                Must be a finite positive float; raises ``ValueError`` otherwise.
+
+        Raises:
+            ValueError: If ``predicted_prob`` is not finite or not in [0, 1],
+                or if ``lr`` is provided but is non-positive or non-finite.
         """
-        epsilon: float = 1e-7
-        p: float = max(epsilon, min(1.0 - epsilon, predicted_prob))
+        if not math.isfinite(predicted_prob):
+            raise ValueError(
+                f"predicted_prob must be a finite float; got {predicted_prob!r}"
+            )
+        if not (0.0 <= predicted_prob <= 1.0):
+            raise ValueError(
+                f"predicted_prob must be in [0.0, 1.0]; got {predicted_prob!r}"
+            )
+        if lr is not None:
+            if not math.isfinite(lr):
+                raise ValueError(
+                    f"lr must be a finite positive float; got {lr!r}"
+                )
+            if lr <= 0.0:
+                raise ValueError(
+                    f"lr must be positive; got {lr!r}"
+                )
+        effective_lr: float = lr if lr is not None else self._lr
+        p: float = max(_PROB_EPS, min(1.0 - _PROB_EPS, predicted_prob))
         logit: float = math.log(p / (1.0 - p))
-        t: float = max(_T_MIN, self._scalars.get(signal_type.value, 1.0))
+        t: float = max(_T_MIN, min(_T_MAX, self._scalars.get(signal_type.value, 1.0)))
         p_cal: float = 1.0 / (1.0 + math.exp(-logit / t))
         y: float = 1.0 if true_label else 0.0
         gradient: float = (p_cal - y) * (-logit / (t * t))
-        new_t: float = max(_T_MIN, t - self._lr * gradient)
+        new_t: float = max(_T_MIN, min(_T_MAX, t - effective_lr * gradient))
         self._scalars[signal_type.value] = new_t
         self._save()
         logger.debug(
-            "ConfidenceCalibrator.update: signal_type=%s T: %.4f → %.4f",
+            "ConfidenceCalibrator.update: signal_type=%s T: %.4f → %.4f (lr=%.5f)",
             signal_type.value,
             t,
             new_t,
+            effective_lr,
         )
 
     # ------------------------------------------------------------------
