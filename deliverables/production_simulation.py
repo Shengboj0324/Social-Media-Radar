@@ -1,8 +1,5 @@
 """
-production_simulation.py — Realistic 24-hour production workload simulation.
-
-Simulates 50,000 social-media observations arriving across 24 hours on the
-Social-Media-Radar pipeline.  Every LLM call is omitted; only the three
+ Every LLM call is omitted; only the three
 data-infrastructure algorithms are exercised:
 
   Stage 1 — BloomFilter deduplication (URL-level dedup)
