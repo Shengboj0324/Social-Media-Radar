@@ -1,0 +1,25 @@
+{
+  "epoch": 4,
+  "val_ece": 0.37572295227447056,
+  "saved_at": "2026-03-19T19:01:11.055478+00:00",
+  "scalars": {
+    "support_request": 3.3885928217600916,
+    "feature_request": 3.0971488402263776,
+    "bug_report": 3.3358860585001078,
+    "complaint": 3.3511453939423608,
+    "praise": 3.409093131818865,
+    "competitor_mention": 3.1912202527745275,
+    "alternative_seeking": 3.33420843821551,
+    "price_sensitivity": 3.298586517821672,
+    "integration_request": 3.45275117880642,
+    "churn_risk": 3.40484438824885,
+    "security_concern": 3.306752375823506,
+    "legal_risk": 3.416427819864039,
+    "reputation_risk": 3.152552150651507,
+    "expansion_opportunity": 3.34828592873445,
+    "upsell_opportunity": 3.3679089729029075,
+    "partnership_opportunity": 3.2547060026174095,
+    "unclear": 3.2685859787290457,
+    "not_actionable": 3.45687067840255
+  }
+}
