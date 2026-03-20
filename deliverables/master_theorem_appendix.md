@@ -1,8 +1,4 @@
-# Master Theorem Worked Examples — Social-Media-Radar
-
-**Course:** CS / Software Engineering  
-**Date:** 2026-03-18
-
+# Master Theorem Worked Examples — Inference-Engine
 ---
 
 ## 1. The Master Theorem — Reference Statement
@@ -192,7 +188,7 @@ and would yield Θ(n log n) for a balanced bisection with linear merge cost — 
 
 ---
 
-## 6. Key Insight: When the Master Theorem Does NOT Apply
+## 6. When the Master Theorem does not apply
 
 The Master Theorem fails in four common situations encountered in this codebase:
 
@@ -200,6 +196,3 @@ The Master Theorem fails in four common situations encountered in this codebase:
 2. **Non-uniform subproblems:** T(n) = T(n/3) + T(2n/3) + f(n) — use Akra-Bazzi.
 3. **Iterative algorithms:** BloomFilter, ReservoirSampler, ConfidenceCalibrator — no recursion; analyse the loop directly (counting operations per iteration).
 4. **Non-recursive parallelism:** asyncio.gather dispatching n tasks — the cost is O(n·c) where c is per-task overhead; no recurrence applies.
-
-Understanding these boundaries is essential for correctly classifying the complexity of algorithms in a real production codebase, where divide-and-conquer is the *exception*, not the rule.
-

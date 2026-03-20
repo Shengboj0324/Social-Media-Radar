@@ -1,16 +1,10 @@
-# Algorithm Performance Analysis — Social-Media-Radar
-
-**Course:** CS / Software Engineering
-**Date:** 2026-03-18
-**Platform:** macOS 14 (Apple Silicon M-series, ARM64), Python 3.9.13
-**Repository:** `Social-Media-Radar` — an AI-driven SaaS signal-classification platform
-
+# Algorithm Performance Analysis — Inference-Engine
 ---
 
 ## 1. Introduction
 
-This report presents a rigorous empirical and theoretical performance analysis of four core
-algorithms implemented in the Social-Media-Radar inference pipeline.  For each algorithm we:
+Empirical and theoretical performance analysis of four core
+algorithms implemented in the inference pipeline.  For each algorithm:
 
 1. State the **theoretical complexity** with a formal derivation.
 2. Measure **wall-clock time** at eight problem sizes on physical hardware.
