@@ -1,8 +1,7 @@
 # Space Complexity Analysis — Social-Media-Radar
-
-**Course:** CS / Software Engineering  
+ 
 **Date:** 2026-03-18  
-**Platform:** macOS 14 (Apple Silicon M-series, ARM64), Python 3.9.13  
+**Platform:**  Python 3.9.13  
 **Measurement tool:** `tracemalloc` (CPython built-in heap profiler)
 
 ---

@@ -312,13 +312,13 @@ proportional to (1+d) = 5 operations.  The measured 0.227 µs/node corresponds t
 
 ## 7. Summary Table — All Algorithms
 
-| Algorithm | Theoretical | Fitted Model | R² | Agreement |
-|-----------|-------------|-------------|-----|-----------|
-| BloomFilter (per-op) | O(1) | T/n = 12.93 µs (flat) | — | ✅ Confirmed constant |
-| BloomFilter (total n ops) | O(n) | 1.293 × 10⁻² · n ms | 0.999997 | ✅ |
-| ReservoirSampler | O(n) | 1.016 × 10⁻³ · n ms | 0.999847 | ✅ |
-| ConfidenceCalibrator | O(m) | 6.466 × 10⁻³ · m ms | 0.999930 | ✅ |
-| BFS graph traversal | O(V+E) = O(n) | 2.270 × 10⁻⁴ · n ms | 0.999894 | ✅ |
+| Algorithm | Theoretical | Fitted Model | R² | Agreement           |
+|-----------|-------------|-------------|-----|---------------------|
+| BloomFilter (per-op) | O(1) | T/n = 12.93 µs (flat) | — |  Confirmed constant |
+| BloomFilter (total n ops) | O(n) | 1.293 × 10⁻² · n ms | 0.999997 | ok                  |
+| ReservoirSampler | O(n) | 1.016 × 10⁻³ · n ms | 0.999847 | ok                  |
+| ConfidenceCalibrator | O(m) | 6.466 × 10⁻³ · m ms | 0.999930 | ok                  |
+| BFS graph traversal | O(V+E) = O(n) | 2.270 × 10⁻⁴ · n ms | 0.999894 | ok                  |
 
 All R² values exceed 0.9998, indicating an essentially perfect linear fit in every case.
 The fitted slope constants are physically interpretable (hash cost, Python call overhead,
@@ -361,7 +361,7 @@ python deliverables/plot_results.py # ~5 s
 python -m pytest tests/ --ignore=tests/llm/test_load.py -q
 ```
 
-**Hardware:** Apple M-series (ARM64), macOS 14
+**Hardware:** Apple M-series (ARM64), Windows 11, x86
 **Python:** 3.9.13, CPython
 **Key library versions:** numpy ≥ 1.24, scipy ≥ 1.10, matplotlib ≥ 3.7
 
@@ -370,8 +370,6 @@ python -m pytest tests/ --ignore=tests/llm/test_load.py -q
 ---
 
 ## 10. Test Suite Verification
-
-The full project test suite was executed after all deliverable files were written to confirm that no source file outside `deliverables/` was accidentally modified and that all 587 pre-existing tests still pass.
 
 **Command run:**
 
@@ -389,12 +387,12 @@ python -m pytest tests/ --ignore=tests/llm/test_load.py -q --tb=short
 
 | Directory | Tests | Result |
 |-----------|-------|--------|
-| `tests/e2e/` | 3 | ✅ 3 passed |
-| `tests/integration/` | 24 | ✅ 24 passed |
-| `tests/intelligence/` | 56 | ✅ 56 passed (includes 10 new E2E pipeline tests) |
-| `tests/llm/` | 44 | ✅ 24 passed, 20 skipped (require API keys) |
-| `tests/unit/` | 396 | ✅ 396 passed |
-| `tests/workflows/` | 84 | ✅ 84 passed |
+| `tests/e2e/` | 3 |  3 passed |
+| `tests/integration/` | 24 |  24 passed |
+| `tests/intelligence/` | 56 |  56 passed (includes 10 new E2E pipeline tests) |
+| `tests/llm/` | 44 |  24 passed, 20 skipped (require API keys) |
+| `tests/unit/` | 396 |  396 passed |
+| `tests/workflows/` | 84 |  84 passed |
 | **Total** | **607** | **587 passed, 20 skipped, 0 failed** |
 
 The 20 skipped tests are live-API integration tests in `tests/llm/test_integration.py` that require `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; they are intentionally designed to skip in credential-free environments (CI-safe by design).
