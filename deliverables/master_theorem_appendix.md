@@ -1,7 +1,7 @@
-# Master Theorem Worked Examples — Inference-Engine
+# Master Theorem Worked Examples of Inference-Engine
 ---
 
-## 1. The Master Theorem — Reference Statement
+## 1. The Master Theorem Reference Statement
 
 For a recurrence of the form
 

@@ -1,4 +1,4 @@
-# Algorithm Performance Analysis — Inference-Engine
+# Algorithm Performance Analysis of Inference-Engine
 ---
 
 ## 1. Introduction
