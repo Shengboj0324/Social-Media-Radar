@@ -91,23 +91,23 @@ per-item normalisation plot (Panel B).
 
 | n (items) | mean (ms) | std (ms) | per-op (µs) |
 |----------:|----------:|---------:|------------:|
-| 500 | 5.861 | 0.1545 | 11.72 |
-| 1,000 | 11.322 | 0.0320 | 11.32 |
-| 2,000 | 22.759 | 0.2631 | 11.38 |
-| 5,000 | 56.768 | 0.5212 | 11.35 |
-| 10,000 | 114.205 | 0.7796 | 11.42 |
-| 20,000 | 230.201 | 1.7066 | 11.51 |
-| 50,000 | 588.699 | 6.1379 | 11.77 |
-| 100,000 | 1,199.933 | 9.6470 | 12.00 |
+| 500 | 6.143 | 0.0651 | 12.29 |
+| 1,000 | 12.213 | 0.1440 | 12.21 |
+| 2,000 | 24.645 | 0.2487 | 12.32 |
+| 5,000 | 60.947 | 0.1853 | 12.19 |
+| 10,000 | 122.205 | 0.3176 | 12.22 |
+| 20,000 | 246.097 | 2.9595 | 12.30 |
+| 50,000 | 631.628 | 3.8035 | 12.63 |
+| 100,000 | 1,300.320 | 10.5959 | 13.00 |
 
 ### 3.4 Multi-Model Comparison
 
 | Model | a | R² |
 |-------|---|----|
-| O(1) constant | 2.787 × 10² ms | 0.000000 |
-| **O(n) linear** | **1.194 × 10⁻² ms/item** | **0.999826** ← best fit & theory |
-| O(n log n) | 1.055 × 10⁻³ ms | 0.998796 |
-| O(n²) quadratic | 1.276 × 10⁻⁷ ms | 0.899230 |
+| O(1) constant | 3.005 × 10² ms | 0.000000 |
+| **O(n) linear** | **1.290 × 10⁻² ms/item** | **0.999663** ← best fit & theory |
+| O(n log n) | 1.140 × 10⁻³ ms | 0.999094 |
+| O(n²) quadratic | 1.381 × 10⁻⁷ ms | 0.902737 |
 
 The O(n) linear model achieves the highest R² and is the theoretically predicted one.
 O(n log n) is close in R² but its fitted constant implies an n log n curve that,
@@ -119,15 +119,15 @@ a known limitation of distinguishing O(n) from O(n log n) over a modest range.
 | Prediction | Value |
 |-----------|-------|
 | Theoretical T_total(n) | O(n) |
-| Fitted model | 1.194 × 10⁻² · n ms |
-| R² | 0.999826 |
+| Fitted model | 1.290 × 10⁻² · n ms |
+| R² | 0.999663 |
 | Theoretical T_op | O(k) = O(1) |
-| Empirical T_op (mean) | 11.69 µs/item |
-| T_op coefficient of variation | ≈ 2.0% |
+| Empirical T_op (mean) | 12.40 µs/item |
+| T_op coefficient of variation | ≈ 2.1% |
 
-The per-item time varies by only 2.0% (CV) across the 200× size range, providing
+The per-item time varies by only 2.1% (CV) across the 200× size range, providing
 strong empirical support for the O(1) per-operation claim.  The slight upward trend
-at n = 100,000 (12.00 µs vs 11.32 µs at n = 1,000) is attributable to L2/L3 cache
+at n = 100,000 (13.00 µs vs 12.21 µs at n = 1,000) is attributable to L2/L3 cache
 pressure: for 100,000 items at ε = 0.01, the bit-array occupies ~959 kB, which
 approaches the typical 1–4 MB L2 boundary on current hardware.  This is a
 constant-factor effect and does not change the asymptotic class.
@@ -167,35 +167,35 @@ T(n) = c₁·k + c₂·(n − k) = c₂·n + (c₁ − c₂)·k = Θ(n)  (for fi
 
 | n (stream size) | mean (ms) | std (ms) | per-item (µs) |
 |----------------:|----------:|---------:|--------------:|
-| 1,000 | 0.937 | 0.0276 | 0.937 |
-| 5,000 | 5.084 | 0.0711 | 1.017 |
-| 10,000 | 9.946 | 0.0503 | 0.995 |
-| 25,000 | 24.519 | 0.4133 | 0.981 |
-| 50,000 | 49.123 | 0.5975 | 0.982 |
-| 100,000 | 97.939 | 0.7859 | 0.979 |
-| 250,000 | 242.522 | 1.4854 | 0.970 |
-| 500,000 | 488.833 | 3.8992 | 0.978 |
+| 1,000 | 0.953 | 0.1117 | 0.953 |
+| 5,000 | 5.245 | 0.1327 | 1.049 |
+| 10,000 | 10.090 | 0.0676 | 1.009 |
+| 25,000 | 25.555 | 0.1153 | 1.022 |
+| 50,000 | 50.088 | 0.1795 | 1.002 |
+| 100,000 | 101.170 | 0.7574 | 1.012 |
+| 250,000 | 248.269 | 0.5223 | 0.993 |
+| 500,000 | 503.489 | 4.2507 | 1.007 |
 
 ### 4.4 Multi-Model Comparison
 
 | Model | a | R² |
 |-------|---|----|
-| O(1) constant | 1.149 × 10² ms | 0.000000 |
-| **O(n) linear** | **9.763 × 10⁻⁴ ms/item** | **0.999985** ← best fit & theory |
-| O(n log n) | 7.551 × 10⁻⁵ ms | 0.998355 |
-| O(n²) quadratic | 2.082 × 10⁻⁹ ms | 0.891822 |
+| O(1) constant | 1.181 × 10² ms | 0.000000 |
+| **O(n) linear** | **1.004 × 10⁻³ ms/item** | **0.999952** ← best fit & theory |
+| O(n log n) | 7.769 × 10⁻⁵ ms | 0.998453 |
+| O(n²) quadratic | 2.143 × 10⁻⁹ ms | 0.893199 |
 
 ### 4.5 Theory vs Empirical
 
 | Prediction | Value |
 |-----------|-------|
 | Theoretical | O(n) |
-| Fitted model | 9.763 × 10⁻⁴ · n ms |
-| R² | 0.999985 |
-| Mean per-item time | 0.978 µs/item |
-| Coefficient of variation | 2.1% |
+| Fitted model | 1.004 × 10⁻³ · n ms |
+| R² | 0.999952 |
+| Mean per-item time | 1.006 µs/item |
+| Coefficient of variation | 2.5% |
 
-Reservoir sampling achieves the tightest linear fit of all five algorithms (R² = 0.999985).
+Reservoir sampling achieves the tightest linear fit of all five algorithms (R² = 0.999952).
 The 0.978 µs/item cost reflects one conditional random-number comparison and one
 occasional array write — consistent with the minimal branch structure of the inner loop.
 The fill-phase overhead is negligible at all tested sizes (k = 500 ≪ n_min = 1,000).
@@ -239,18 +239,18 @@ computation.  The raw I/O cost is characterised separately below.
 
 | m (updates) | mean (ms) | std (ms) | per-update (µs) |
 |------------:|----------:|---------:|----------------:|
-| 100 | 0.877 | 0.2552 | 8.77 |
-| 500 | 2.716 | 0.0952 | 5.43 |
-| 1,000 | 5.248 | 0.1311 | 5.25 |
-| 5,000 | 31.427 | 13.937 | 6.29 |
-| 10,000 | 62.927 | 18.959 | 6.29 |
-| 50,000 | 308.206 | 14.337 | 6.16 |
-| 100,000 | 623.941 | 19.013 | 6.24 |
-| 500,000 | 3,118.926 | 57.019 | 6.24 |
+| 100 | 0.784 | 0.1579 | 7.84 |
+| 500 | 2.949 | 0.1218 | 5.90 |
+| 1,000 | 5.648 | 0.1190 | 5.65 |
+| 5,000 | 33.387 | 15.589 | 6.68 |
+| 10,000 | 66.939 | 20.929 | 6.69 |
+| 50,000 | 333.627 | 17.829 | 6.67 |
+| 100,000 | 666.497 | 15.850 | 6.66 |
+| 500,000 | 3,282.727 | 43.203 | 6.57 |
 
-The higher per-update cost at m = 100 (8.77 µs) reflects fixed `__init__` overhead
+The higher per-update cost at m = 100 (7.84 µs) reflects fixed `__init__` overhead
 (file-existence check, dict initialisation) amortised over only 100 updates.  At
-m ≥ 1,000 the per-update cost stabilises at ≈ 6.24 µs.
+m ≥ 1,000 the per-update cost stabilises at ≈ 6.65 µs.
 
 **Disk I/O overhead (unpatched):** Each `_save()` writes a ~400-byte JSON file via
 `json.dump`.  On NVMe SSD this costs approximately 50–70 µs per write, giving an
@@ -266,25 +266,25 @@ epoch rather than after every update.
 
 | Model | a | R² |
 |-------|---|----|
-| O(1) constant | 5.193 × 10² ms | 0.000000 |
-| **O(n) linear** | **6.237 × 10⁻³ ms/update** | **0.999998** ← best fit & theory |
-| O(n log n) | 4.780 × 10⁻⁴ ms | 0.998925 |
-| O(n²) quadratic | 1.257 × 10⁻⁸ ms | 0.959029 |
+| O(1) constant | 5.491 × 10² ms | 0.000000 |
+| **O(n) linear** | **6.570 × 10⁻³ ms/update** | **0.999986** ← best fit & theory |
+| O(n log n) | 5.035 × 10⁻⁴ ms | 0.998623 |
+| O(n²) quadratic | 1.323 × 10⁻⁸ ms | 0.957230 |
 
 ### 5.5 Theory vs Empirical
 
 | Prediction | Value |
 |-----------|-------|
 | Theoretical | O(m) |
-| Fitted model | 6.237 × 10⁻³ · m ms |
-| R² | 0.999998 |
-| Steady-state per-update time | 6.24 µs |
-| CV (m ≥ 1,000) | 15.8% |
+| Fitted model | 6.570 × 10⁻³ · m ms |
+| R² | 0.999986 |
+| Steady-state per-update time | ≈ 6.65 µs |
+| CV (m ≥ 1,000) | 9.2% |
 
-The higher CV (15.8%) compared to BFS or reservoir sampling reflects Python GIL
-jitter on the `exp` / `log` computations, which are not memory-bound and therefore
-more sensitive to scheduling variance.  The fit is nonetheless near-perfect
-(R² = 0.999998), and linear is confirmed as the single best model.
+The CV of 9.2% reflects Python GIL jitter on the `exp` / `log` computations, which
+are not memory-bound and therefore more sensitive to scheduling variance than
+array-access-dominated algorithms like reservoir sampling.  The fit is nonetheless
+very strong (R² = 0.999986), and linear is confirmed as the single best model.
 
 **Plot:** `deliverables/plots/calibrator.png`
 
@@ -330,38 +330,38 @@ T(n) = c · (n + 4n) = 5c · n = Θ(n)   (for fixed d)
 
 | n (nodes) | mean (ms) | std (ms) | per-node (µs) |
 |----------:|----------:|---------:|--------------:|
-| 250 | 0.040 | 0.0002 | 0.160 |
-| 500 | 0.091 | 0.0041 | 0.182 |
-| 1,000 | 0.195 | 0.0040 | 0.195 |
-| 2,500 | 0.543 | 0.0091 | 0.217 |
-| 5,000 | 1.083 | 0.0419 | 0.217 |
-| 10,000 | 2.163 | 0.0530 | 0.216 |
-| 25,000 | 5.209 | 0.0362 | 0.208 |
-| 50,000 | 10.579 | 0.0935 | 0.212 |
+| 250 | 0.047 | 0.0048 | 0.188 |
+| 500 | 0.107 | 0.0130 | 0.214 |
+| 1,000 | 0.202 | 0.0020 | 0.202 |
+| 2,500 | 0.567 | 0.0482 | 0.227 |
+| 5,000 | 1.084 | 0.0370 | 0.217 |
+| 10,000 | 2.239 | 0.0473 | 0.224 |
+| 25,000 | 5.955 | 0.5638 | 0.238 |
+| 50,000 | 11.111 | 0.1448 | 0.222 |
 
 ### 6.4 Multi-Model Comparison
 
 | Model | a | R² |
 |-------|---|----|
-| O(1) constant | 2.488 ms | 0.000000 |
-| **O(n) linear** | **2.112 × 10⁻⁴ ms/node** | **0.999900** ← best fit & theory |
-| O(n log n) | 1.986 × 10⁻⁵ ms | 0.997321 |
-| O(n²) quadratic | 4.503 × 10⁻⁹ ms | 0.891517 |
+| O(1) constant | 2.664 ms | 0.000000 |
+| **O(n) linear** | **2.253 × 10⁻⁴ ms/node** | **0.998803** ← best fit & theory |
+| O(n log n) | 2.118 × 10⁻⁵ ms | 0.994331 |
+| O(n²) quadratic | 4.774 × 10⁻⁹ ms | 0.872322 |
 
 ### 6.5 Theory vs Empirical
 
 | Prediction | Value |
 |-----------|-------|
 | Theoretical | O(V+E) = O(n) |
-| Fitted model | 2.112 × 10⁻⁴ · n ms |
-| R² | 0.999900 |
-| Mean per-node time | 0.203 µs/node |
-| Coefficient of variation | 9.6% |
+| Fitted model | 2.253 × 10⁻⁴ · n ms |
+| R² | 0.998803 |
+| Mean per-node time | 0.216 µs/node |
+| Coefficient of variation | 6.8% |
 
-The small per-node values at n = 250–500 (0.160–0.182 µs) reflect cache-warm-up and
-deque initialisation overhead spread over fewer iterations; the ratio stabilises to
-≈ 0.21 µs/node at n ≥ 1,000.  Python's C-implemented `set.add` and `deque.append`
-keep variance low (CV = 9.6%), making this the most stable of the five benchmarks.
+The ratio stabilises to ≈ 0.22 µs/node at n ≥ 1,000; the slightly elevated values at
+n = 25,000 (0.238 µs) reflect occasional L2-cache evictions as the visited-set grows.
+Python's C-implemented `set.add` and `deque.append` keep variance reasonably low
+(CV = 6.8%).
 
 **Plot:** `deliverables/plots/bfs.png`
 
@@ -404,16 +404,16 @@ distinguish empirically without a size range exceeding ~10⁶.
 
 | n (inferences) | mean (ms) | std (ms) | per-inference (µs) |
 |---------------:|----------:|---------:|-------------------:|
-| 10 | 0.122 | 0.0023 | 12.2 |
-| 50 | 0.631 | 0.0137 | 12.6 |
-| 100 | 1.250 | 0.0208 | 12.5 |
-| 500 | 6.647 | 0.0928 | 13.3 |
-| 1,000 | 13.500 | 0.1424 | 13.5 |
-| 5,000 | 83.460 | 0.5831 | 16.7 |
-| 10,000 | 168.121 | 1.3247 | 16.8 |
-| 50,000 | 860.302 | 7.4312 | 17.2 |
+| 10 | 0.133 | 0.0036 | 13.3 |
+| 50 | 0.659 | 0.0199 | 13.2 |
+| 100 | 1.332 | 0.0782 | 13.3 |
+| 500 | 7.044 | 0.1586 | 14.1 |
+| 1,000 | 14.078 | 0.1613 | 14.1 |
+| 5,000 | 88.871 | 22.382 | 17.8 |
+| 10,000 | 176.536 | 27.952 | 17.7 |
+| 50,000 | 887.536 | 44.723 | 17.8 |
 
-The per-inference cost rises from 12.5 µs at n = 100 to 17.2 µs at n = 50,000 —
+The per-inference cost rises from 13.3 µs at n = 100 to 17.8 µs at n = 50,000 —
 consistent with O(n log n) sort overhead becoming measurable at larger n.
 
 ### 7.4 Multi-Model Comparison
@@ -455,9 +455,9 @@ production batch sizes.
 
 | Algorithm | Theoretical | Best-fit model | R² | Fitted constant |
 |-----------|-------------|----------------|-----|-----------------|
-| BloomFilter (total) | O(n) | O(n) linear | 0.999399 | 1.401 × 10⁻² ms/item |
-| ReservoirSampler | O(n) | O(n) linear | 0.999980 | 1.012 × 10⁻³ ms/item |
-| ConfidenceCalibrator | O(m) | O(n) linear | 0.999990 | 6.601 × 10⁻³ ms/update |
+| BloomFilter (total) | O(n) | O(n) linear | 0.999663 | 1.290 × 10⁻² ms/item |
+| ReservoirSampler | O(n) | O(n) linear | 0.999952 | 1.004 × 10⁻³ ms/item |
+| ConfidenceCalibrator | O(m) | O(n) linear | 0.999986 | 6.570 × 10⁻³ ms/update |
 | BFS | O(V+E) = O(n) | O(n) linear | 0.998803 | 2.253 × 10⁻⁴ ms/node |
 | ActionRanker batch | O(n log n)† | O(n) linear | 0.999973 | 1.775 × 10⁻² ms/inf |
 
@@ -599,18 +599,14 @@ excluded from the automated run.)
 
 **Breakdown by directory:**
 
-| Directory | Tests | Result |
-|-----------|-------|--------|
+| Directory | Collected | Result |
+|-----------|-----------|--------|
 | `tests/e2e/` | 3 | 3 passed |
-| `tests/integration/` | 24 | 24 passed |
-| `tests/intelligence/` | 62 | 62 passed (includes 6 new ActionRanker order tests) |
-| `tests/llm/` | 44 | 24 passed, 20 skipped (require API keys) |
-| `tests/api/` | 460 | 460 passed |
-| `tests/evals/` | — | included above |
-| `tests/unit/` | 396 |  396 passed |
-| `tests/workflows/` | 84 |  84 passed |
-| **Total** | **607** | **587 passed, 20 skipped, 0 failed** |
+| `tests/integration/` | 22 | 22 passed |
+| `tests/intelligence/` | 63 | 63 passed (includes 6 new ActionRanker order tests) |
+| `tests/llm/` | 66 | 46 passed, 20 skipped (live API keys required; `test_load.py` excluded) |
+| `tests/unit/` | 431 | 431 passed |
+| `tests/workflows/` | 28 | 28 passed |
+| **Total** | **613** | **593 passed, 20 skipped, 0 failed** |
 
-The 20 skipped tests are live-API integration tests in `tests/llm/test_integration.py` that require `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`; they are intentionally designed to skip in credential-free environments (CI-safe by design).
-
-**Zero regressions.** All new files reside exclusively in `deliverables/` and make no imports from, or modifications to, any source file in `app/`, `tests/`, or `docs/`.
+The 20 skipped tests require a live `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` and are intentionally designed to skip in credential-free environments (CI-safe). `tests/llm/test_load.py` is excluded via `--ignore` because it causes a collection error in environments without the corresponding model weights.

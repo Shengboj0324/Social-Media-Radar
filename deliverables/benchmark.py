@@ -314,8 +314,11 @@ def main():
     write_csv(out / "bfs.csv", ["n", "mean_ms", "std_ms"], bfs_rows)
 
     # Algorithm 5: ActionRanker.rank_batch()
+    # Theoretical complexity is O(n log n) due to the final Timsort; however,
+    # at n ≤ 50,000 the O(n) linear model typically wins on R² because the
+    # log factor varies by only ~1.7× over that range (see report §7).
     ar_rows = bench_action_ranker()
-    fit_multi("ActionRanker", ar_rows, "O(n)  — linear")
+    fit_multi("ActionRanker", ar_rows, "O(n log n)")
     write_csv(out / "action_ranker.csv", ["n", "mean_ms", "std_ms"], ar_rows)
 
     print("\n" + "=" * 62)
