@@ -135,10 +135,36 @@ class Settings(BaseSettings):
     @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
-        """Parse CORS origins from string or list."""
+        """Parse CORS origins from multiple input formats.
+
+        pydantic-settings v2 calls json.loads() on List[str] fields before
+        this validator runs, so by the time this is invoked the value is
+        usually already a Python list.  The three cases handled here cover
+        all remaining entry points (programmatic assignment, tests, legacy
+        comma-separated env vars set directly on the process environment):
+
+          1. Already a list  → return as-is (normal pydantic-settings v2 path)
+          2. JSON array str  → parse with json.loads and return the list
+          3. Comma-separated → split, strip, return non-empty entries
+        """
+        import json as _json
+
+        if isinstance(v, list):
+            return [str(origin).strip() for origin in v if str(origin).strip()]
+
         if isinstance(v, str):
-            return [origin.strip() for origin in v.strip("[]").split(",")]
-        return v
+            v = v.strip()
+            if v.startswith("["):
+                try:
+                    parsed = _json.loads(v)
+                    if isinstance(parsed, list):
+                        return [str(o).strip() for o in parsed if str(o).strip()]
+                except _json.JSONDecodeError:
+                    pass
+            # Fallback: treat as comma-separated plain string
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+
+        return list(v)
 
     @field_validator("log_level")
     @classmethod
