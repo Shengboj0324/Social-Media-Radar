@@ -17,6 +17,20 @@ class MediaType(str, Enum):
     MIXED = "mixed"
 
 
+class ContentType(str, Enum):
+    """Semantic content type used by platform connectors.
+
+    Distinct from MediaType (which describes the technical format).
+    ContentType describes what the content *is* at a business level.
+    """
+
+    ARTICLE = "article"
+    VIDEO = "video"
+    IMAGE = "image"
+    TEXT = "text"
+    LINK = "link"
+
+
 class SourcePlatform(str, Enum):
     """Supported source platforms."""
 
