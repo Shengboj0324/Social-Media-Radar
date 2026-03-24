@@ -18,7 +18,12 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.dialects import postgresql
+
+
+def _table_exists(table_name: str) -> bool:
+    return table_name in sa_inspect(op.get_bind()).get_table_names()
 
 # revision identifiers, used by Alembic.
 revision: str = '001_signals'
@@ -30,61 +35,41 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Create actionable_signals table and related enums."""
     
-    # Create enum types
+    # Create enum types — create_type=False prevents _on_table_create from
+    # issuing CREATE TYPE again (without IF NOT EXISTS) when op.create_table()
+    # is called below. We manage creation explicitly with checkfirst=True.
     signal_type_enum = postgresql.ENUM(
-        'lead_opportunity',
-        'competitor_weakness',
-        'influencer_amplification',
-        'churn_risk',
-        'misinformation_risk',
-        'support_escalation',
-        'product_confusion',
-        'feature_request_pattern',
-        'launch_moment',
+        'lead_opportunity', 'competitor_weakness', 'influencer_amplification',
+        'churn_risk', 'misinformation_risk', 'support_escalation',
+        'product_confusion', 'feature_request_pattern', 'launch_moment',
         'trend_to_content',
-        name='signaltype',
-        create_type=True,
+        name='signaltype', create_type=False,
     )
     signal_type_enum.create(op.get_bind(), checkfirst=True)
-    
+
     action_type_enum = postgresql.ENUM(
-        'reply_public',
-        'dm_outreach',
-        'create_content',
-        'internal_alert',
-        'monitor',
-        'escalate',
-        name='actiontype',
-        create_type=True,
+        'reply_public', 'dm_outreach', 'create_content',
+        'internal_alert', 'monitor', 'escalate',
+        name='actiontype', create_type=False,
     )
     action_type_enum.create(op.get_bind(), checkfirst=True)
-    
+
     signal_status_enum = postgresql.ENUM(
-        'new',
-        'queued',
-        'in_progress',
-        'acted',
-        'dismissed',
-        'expired',
-        name='signalstatus',
-        create_type=True,
+        'new', 'queued', 'in_progress', 'acted', 'dismissed', 'expired',
+        name='signalstatus', create_type=False,
     )
     signal_status_enum.create(op.get_bind(), checkfirst=True)
-    
+
     response_tone_enum = postgresql.ENUM(
-        'helpful',
-        'professional',
-        'technical',
-        'founder_voice',
-        'supportive',
-        'educational',
-        name='responsetone',
-        create_type=True,
+        'helpful', 'professional', 'technical',
+        'founder_voice', 'supportive', 'educational',
+        name='responsetone', create_type=False,
     )
     response_tone_enum.create(op.get_bind(), checkfirst=True)
     
     # Create actionable_signals table
-    op.create_table(
+    if not _table_exists('actionable_signals'):
+     op.create_table(
         'actionable_signals',
         # Primary key
         sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True),
@@ -154,17 +139,18 @@ def upgrade() -> None:
     )
 
     # signal_feedback — human corrections for online calibration
-    op.create_table(
-        'signal_feedback',
-        sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column('signal_id', postgresql.UUID(as_uuid=True), nullable=False, index=True),
-        sa.Column('predicted_type', sa.String(50), nullable=False),
-        sa.Column('true_type', sa.String(50), nullable=False),
-        sa.Column('predicted_confidence', sa.Float(), nullable=False),
-        sa.Column('user_id', postgresql.UUID(as_uuid=True), nullable=False, index=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), index=True),
-        sa.ForeignKeyConstraint(['signal_id'], ['actionable_signals.id'], ondelete='CASCADE'),
-    )
+    if not _table_exists('signal_feedback'):
+        op.create_table(
+            'signal_feedback',
+            sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True),
+            sa.Column('signal_id', postgresql.UUID(as_uuid=True), nullable=False, index=True),
+            sa.Column('predicted_type', sa.String(50), nullable=False),
+            sa.Column('true_type', sa.String(50), nullable=False),
+            sa.Column('predicted_confidence', sa.Float(), nullable=False),
+            sa.Column('user_id', postgresql.UUID(as_uuid=True), nullable=False, index=True),
+            sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), index=True),
+            sa.ForeignKeyConstraint(['signal_id'], ['actionable_signals.id'], ondelete='CASCADE'),
+        )
 
 
 def downgrade() -> None:
