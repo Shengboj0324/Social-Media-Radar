@@ -7,7 +7,32 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, Optional
 
-from prometheus_client import Counter, Gauge, Histogram, Summary
+from prometheus_client import REGISTRY, Counter, Gauge, Histogram, Summary
+
+
+# ---------------------------------------------------------------------------
+# Helpers — safe to call on every module import (including uvicorn reloads)
+# ---------------------------------------------------------------------------
+
+def _counter(name: str, doc: str, labels: tuple = ()) -> Counter:
+    try:
+        return Counter(name, doc, list(labels))
+    except ValueError:
+        return REGISTRY._names_to_collectors[name]  # type: ignore[return-value]
+
+
+def _histogram(name: str, doc: str, labels: tuple = ()) -> Histogram:
+    try:
+        return Histogram(name, doc, list(labels))
+    except ValueError:
+        return REGISTRY._names_to_collectors[name]  # type: ignore[return-value]
+
+
+def _gauge(name: str, doc: str) -> Gauge:
+    try:
+        return Gauge(name, doc)
+    except ValueError:
+        return REGISTRY._names_to_collectors[name]  # type: ignore[return-value]
 
 logger = logging.getLogger(__name__)
 
@@ -21,125 +46,75 @@ class MetricType(str, Enum):
     SUMMARY = "summary"
 
 
-# Define Prometheus metrics
-# Request metrics
-http_requests_total = Counter(
-    "http_requests_total",
-    "Total HTTP requests",
-    ["method", "endpoint", "status"],
-)
+# ---------------------------------------------------------------------------
+# Prometheus metrics — all defined via safe helpers so that uvicorn --reload
+# re-imports of this module do not crash with "Duplicated timeseries".
+# ---------------------------------------------------------------------------
 
-http_request_duration_seconds = Histogram(
-    "http_request_duration_seconds",
-    "HTTP request duration in seconds",
-    ["method", "endpoint"],
+# Request metrics
+http_requests_total = _counter(
+    "http_requests_total", "Total HTTP requests", ("method", "endpoint", "status")
+)
+http_request_duration_seconds = _histogram(
+    "http_request_duration_seconds", "HTTP request duration in seconds", ("method", "endpoint")
 )
 
 # Connector metrics
-connector_requests_total = Counter(
-    "connector_requests_total",
-    "Total connector requests",
-    ["platform", "status"],
+connector_requests_total = _counter(
+    "connector_requests_total", "Total connector requests", ("platform", "status")
 )
-
-connector_request_duration_seconds = Histogram(
-    "connector_request_duration_seconds",
-    "Connector request duration in seconds",
-    ["platform"],
+connector_request_duration_seconds = _histogram(
+    "connector_request_duration_seconds", "Connector request duration in seconds", ("platform",)
 )
-
-connector_items_fetched = Counter(
-    "connector_items_fetched",
-    "Total items fetched by connectors",
-    ["platform"],
+connector_items_fetched = _counter(
+    "connector_items_fetched", "Total items fetched by connectors", ("platform",)
 )
 
 # Scraping metrics
-scraping_requests_total = Counter(
-    "scraping_requests_total",
-    "Total scraping requests",
-    ["domain", "status"],
+scraping_requests_total = _counter(
+    "scraping_requests_total", "Total scraping requests", ("domain", "status")
 )
-
-scraping_duration_seconds = Histogram(
-    "scraping_duration_seconds",
-    "Scraping duration in seconds",
-    ["domain"],
+scraping_duration_seconds = _histogram(
+    "scraping_duration_seconds", "Scraping duration in seconds", ("domain",)
 )
 
 # LLM metrics
-llm_requests_total = Counter(
-    "llm_requests_total",
-    "Total LLM requests",
-    ["provider", "model", "status"],
+llm_requests_total = _counter(
+    "llm_requests_total", "Total LLM requests", ("provider", "model", "status")
 )
-
-llm_request_duration_seconds = Histogram(
-    "llm_request_duration_seconds",
-    "LLM request duration in seconds",
-    ["provider", "model"],
+llm_request_duration_seconds = _histogram(
+    "llm_request_duration_seconds", "LLM request duration in seconds", ("provider", "model")
 )
-
-llm_tokens_used = Counter(
-    "llm_tokens_used",
-    "Total LLM tokens used",
-    ["provider", "model", "type"],
+llm_tokens_used = _counter(
+    "llm_tokens_used", "Total LLM tokens used", ("provider", "model", "type")
 )
 
 # Output generation metrics
-output_generation_total = Counter(
-    "output_generation_total",
-    "Total output generations",
-    ["format", "status"],
+output_generation_total = _counter(
+    "output_generation_total", "Total output generations", ("format", "status")
 )
-
-output_generation_duration_seconds = Histogram(
-    "output_generation_duration_seconds",
-    "Output generation duration in seconds",
-    ["format"],
+output_generation_duration_seconds = _histogram(
+    "output_generation_duration_seconds", "Output generation duration in seconds", ("format",)
 )
-
-output_quality_score = Histogram(
-    "output_quality_score",
-    "Output quality scores",
-    ["format"],
+output_quality_score = _histogram(
+    "output_quality_score", "Output quality scores", ("format",)
 )
 
 # Database metrics
-database_queries_total = Counter(
-    "database_queries_total",
-    "Total database queries",
-    ["operation", "status"],
+database_queries_total = _counter(
+    "database_queries_total", "Total database queries", ("operation", "status")
 )
-
-database_query_duration_seconds = Histogram(
-    "database_query_duration_seconds",
-    "Database query duration in seconds",
-    ["operation"],
+database_query_duration_seconds = _histogram(
+    "database_query_duration_seconds", "Database query duration in seconds", ("operation",)
 )
 
 # System metrics
-active_users = Gauge(
-    "active_users",
-    "Number of active users",
-)
-
-content_items_total = Gauge(
-    "content_items_total",
-    "Total content items in database",
-)
-
-clusters_generated_total = Counter(
-    "clusters_generated_total",
-    "Total clusters generated",
-)
+active_users = _gauge("active_users", "Number of active users")
+content_items_total = _gauge("content_items_total", "Total content items in database")
+clusters_generated_total = _counter("clusters_generated_total", "Total clusters generated")
 
 # Error metrics
-errors_total = Counter(
-    "errors_total",
-    "Total errors",
-    ["error_code", "severity"],
-)
+errors_total = _counter("errors_total", "Total errors", ("error_code", "severity"))
 
 
 class MetricsCollector:
