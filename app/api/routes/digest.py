@@ -140,7 +140,7 @@ async def get_latest_digest_markdown(
 @router.get("/history")
 async def get_digest_history(
     limit: int = Query(default=10, ge=1, le=100),
-    current_user: User = Depends(get_current_user),
+    current_user: UserProfile = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get historical digests for the user.
