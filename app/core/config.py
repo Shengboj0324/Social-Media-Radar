@@ -1,11 +1,36 @@
 """Application configuration using Pydantic settings with comprehensive validation."""
 
+import json as _json
 import os
 import secrets
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, EnvSettingsSource, SettingsConfigDict
+
+
+class _RobustEnvSource(EnvSettingsSource):
+    """EnvSettingsSource that accepts plain/comma-separated strings for List fields.
+
+    pydantic-settings v2 calls json.loads() on complex-typed fields (List, dict,
+    …) *before* any @field_validator is reached.  A bare value like
+    ``CORS_ORIGINS=http://localhost:3000`` therefore crashes in the source layer
+    with a JSONDecodeError.  This subclass converts non-JSON list env vars to a
+    valid JSON array string before handing them to the parent implementation.
+    """
+
+    _LIST_FIELDS = {"cors_origins"}
+
+    def prepare_field_value(
+        self, field_name: str, field: Any, value: Any, value_is_complex: bool
+    ) -> Any:
+        if field_name in self._LIST_FIELDS and isinstance(value, str):
+            v = value.strip()
+            if v and not v.startswith("["):
+                # Convert bare URL or comma-separated string to a JSON array.
+                origins = [o.strip() for o in v.split(",") if o.strip()]
+                value = _json.dumps(origins)
+        return super().prepare_field_value(field_name, field, value, value_is_complex)
 
 
 class Settings(BaseSettings):
@@ -131,6 +156,22 @@ class Settings(BaseSettings):
         if v not in allowed:
             raise ValueError(f"Environment must be one of {allowed}")
         return v
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: Type[BaseSettings],
+        init_settings: Any,
+        env_settings: Any,
+        dotenv_settings: Any,
+        file_secret_settings: Any,
+    ) -> Tuple[Any, ...]:
+        """Replace the default env source with our resilient subclass."""
+        return (
+            init_settings,
+            _RobustEnvSource(settings_cls),
+            file_secret_settings,
+        )
 
     @field_validator("cors_origins", mode="before")
     @classmethod
